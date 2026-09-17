@@ -3,6 +3,11 @@
 Instagram campaign creatives from a brief or a reference image, in Indian
 languages, built on Microsoft AI Foundry with **MAI-Image-2.6**.
 
+📖 **[Full documentation](docs/)** — architecture, constraints, API, typography,
+compliance, decisions, roadmap.
+
+---
+
 ## The one idea
 
 Generate **one text-free image**. Composite the logo and every language's text
@@ -12,21 +17,31 @@ Three verified facts force this:
 
 1. **MAI-Image-2.6 declares `Languages: en`.** Asking it to draw Devanagari or
    Tamil is outside its supported envelope, and Indic scripts need complex
-   shaping the model will garble in a uniquely dangerous way — the output looks
+   shaping the model garbles in a uniquely dangerous way — the output looks
    plausible to an English-speaking operator and illiterate to the audience.
 2. **The model allows 2–12 requests per minute.** Six languages across four
    formats as separate calls is not physically possible.
-3. **Azure OCR cannot extract Bengali, Tamil, Telugu, Kannada, Malayalam,
-   Gujarati, Gurmukhi or Odia.** For most of our languages we could not verify
-   model-drawn text even if we wanted it. We do not ship what we cannot check.
+3. **Azure OCR cannot extract 8 of the Indic scripts.** For most of our
+   languages we could not verify model-drawn text even if we wanted it. We do
+   not ship what we cannot check.
 
 So the seventh language costs **zero** model calls, the logo is byte-exact
 rather than hallucinated, and QA for the text path is arithmetic instead of
 inference.
 
-Measured on the demo campaign: **2 image calls → 14 deliverables.**
+**Measured: 2 image calls → 14 deliverables.**
 
-## Quick start (no Azure needed)
+![Seven locales from a single generation](docs/images/language-proof.png)
+
+*All seven v1 locales from one image generation. Each auto-fitted to its own
+script's metrics, all inside the Instagram safe zone. The background is mock
+mode; the typography and compositing are the real pipeline.*
+
+---
+
+## Quick start
+
+No Azure subscription needed — `MAI_MOCK` defaults to on.
 
 ```bash
 python -m venv .venv
@@ -34,15 +49,14 @@ python -m venv .venv
 .venv/Scripts/python -m playwright install chromium
 ```
 
-`MAI_MOCK` defaults to on, so the whole pipeline runs without a subscription
-and the test suite never depends on a 2 RPM quota.
+Run the tests (121, ~15s):
 
 ```bash
 cd backend && ../.venv/Scripts/python -m pytest -q
 ```
 
-Render one campaign in all seven locales and build a contact sheet — this is
-the visual gate for the riskiest part of the product:
+Render one campaign in all seven locales and build a contact sheet — the visual
+gate for the riskiest part of the product:
 
 ```bash
 cd backend && ../.venv/Scripts/python scripts/language_proof.py
@@ -58,13 +72,15 @@ cd backend && ../.venv/Scripts/python -m uvicorn app.main:app --reload
 curl -X POST localhost:8000/api/campaigns -H "content-type: application/json" -d "{\"brief\":\"a glass bottle of coconut oil on dark walnut, warm festive bokeh\",\"formats\":[\"portrait\",\"story\"],\"occasion\":\"Diwali\",\"occasion_by_locale\":{\"bn\":\"Durga Puja\"}}"
 ```
 
-Then poll `/api/jobs/{id}` and download `/api/jobs/{id}/bundle`.
+Then poll `/api/jobs/{id}` and download `/api/jobs/{id}/bundle`. Full reference
+in [docs/api.md](docs/api.md).
+
+---
 
 ## Connecting real Foundry
 
-`az` is not installed by default — install the Azure CLI first. MAI-Image-2.6
-is available in **`southindia`** (and `uaenorth`), which suits an India-focused
-product.
+The Azure CLI is **not** installed by default. MAI-Image-2.6 is available in
+**`southindia`** (and `uaenorth`), which suits an India-focused product.
 
 ```bash
 az login
@@ -88,10 +104,11 @@ az cognitiveservices account deployment create \
 
 `--custom-domain` must be globally unique. Confirm what your subscription can
 actually deploy with `az cognitiveservices account list-models` before trusting
-the version string. Deploy `MAI-Image-2.6-Flash` too — it gets its own RPM
-bucket, so routing drafts to it roughly doubles usable throughput.
+the version string. Deploy `MAI-Image-2.6-Flash` too — a separate deployment
+gets its own RPM bucket, so routing drafts there roughly doubles usable
+throughput.
 
-Then:
+Then copy `.env.example` to `.env`:
 
 ```
 MAI_MOCK=0
@@ -103,85 +120,76 @@ MAI_RPM=2
 Auth uses Entra ID via `DefaultAzureCredential` unless `FOUNDRY_API_KEY` is
 set. Prefer Entra — there is then no key to leak or rotate.
 
-> **MAI image models are public preview**: no SLA, and Microsoft's own docs say
-> not recommended for production workloads. That is a business risk to accept
-> explicitly. Every call is isolated in `app/foundry/image_client.py` so the
-> blast radius of an API change stays small.
+**File the quota-increase request on day one.** Priority goes to accounts
+already using their allocation, so the clock starts when you begin generating.
+
+> ⚠️ **MAI image models are public preview**: no SLA, and Microsoft's own docs
+> say not recommended for production workloads. That is a business risk to
+> accept deliberately. Every call is isolated in
+> `backend/app/foundry/image_client.py` so the blast radius of an API change
+> stays small.
+
+---
 
 ## Layout
 
 ```
 backend/app/
-  config.py                 env, MAI_MOCK, MAI_RPM
-  main.py                   FastAPI; generation is always a job, never sync
+  config.py                 settings; MAI_MOCK defaults on
+  main.py                   FastAPI; generation is always a job
   pipeline.py               one generation -> N language variants
-  foundry/
-    image_client.py         the ONLY place that calls MAI
-    mock_client.py          deterministic placeholder, enforces the same limits
-    ratelimit.py            token bucket + 429 backoff
-  imaging/
-    dimensions.py           the aspect table (see below)
-    safezones.py            Instagram safe zones, as hard gates
-    compose.py              crop, upscale, contrast-aware logo placement
-    overlay.py              Chromium text renderer
-  copy/
-    languages.py            (language, script, register) + per-script metrics
-    strategy.py             CreativeBrief -> English prompt (a pure function)
-    transcreate.py          per-locale copy, authored not translated
+  foundry/                  the only place that calls MAI, + mock + rate limiting
+  imaging/                  dimensions, safe zones, compositing, Chromium overlay
+  copy/                     languages, prompt construction, transcreation
+docs/                       full documentation
+.github/backlog.json        29 issues as data, with an idempotent seeder
 ```
 
+See [docs/code-map.md](docs/code-map.md) for the module-by-module reference.
+
+---
+
 ## Things that are easy to get wrong
+
+Each of these is covered properly in [docs/constraints.md](docs/constraints.md).
 
 **Dimensions.** `width ≥ 768`, `height ≥ 768`, `width × height ≤ 1,048,576`.
 Exact 9:16 computes to a 767px side and is **rejected**; 1.91:1 landscape needs
 a 740px side and is **unreachable**. Both are generated at the nearest legal
-aspect and cropped. All of this lives in `resolve_dimensions()` — scattered, it
-will be got wrong.
-
-| Format | Instagram | Generate at | Crop |
-|---|---|---|---|
-| portrait (feed default) | 1080×1350 | 912×1140 | no |
-| grid (profile crop) | 1080×1440 | 885×1180 | no |
-| story / reel | 1080×1920 | 768×1365 | yes |
-| square | 1080×1080 | 1024×1024 | no |
-| landscape | 1080×566 | 1365×768 | yes |
-
-`width`/`height` are parameters of the **generations** endpoint only. The edits
-endpoint takes no dimensions, so the reference is cover-cropped before upload
-and the response cropped again after.
+aspect and cropped. `width`/`height` are parameters of the **generations**
+endpoint only — the edits endpoint takes no dimensions.
 
 **Text rendering.** `PIL.features.check("raqm")` is `False` here, so Pillow
 cannot shape Indic scripts — `ImageDraw.text` would silently emit unreordered,
-disconnected glyphs. Text goes through Chromium, which brings HarfBuzz and ICU.
-Pillow is used for pixels only.
-
-Enforced in code, not left to templates: `letter-spacing: 0` for every non-Latin
-script (tracking pulls shaped clusters apart and breaks conjuncts), no
-synthesised bold, per-script line-height, and words are never broken — the
-fitter shrinks type instead, because breaking an Indic word splits a consonant
-from its matra.
+disconnected glyphs. Text goes through Chromium.
 
 **Safe zones.** Meta unified the 9:16 safe zone in March 2026: top 14%, bottom
-35% for Reels, left/right 6% — a usable box of **950×979**. These raise
-`SafeZoneViolation`, they do not warn. The logo is anchored inside the safe rect
-rather than the canvas edge, so compliance is structural.
+35% for Reels, left/right 6% — a usable box of **950×979**. These raise, they
+do not warn.
 
 **The logo is never described to the model.** A diffusion model produces a
 plausible logo, which is a wrong logo — and describing a mark in a prompt asks
-the model to reproduce a trademark. Same for the product, maps of India, and the
-flag: all composited from real assets, all listed in the prompt's prohibitions.
+the model to reproduce a trademark. Same for the product, maps of India, and
+the flag.
 
 **Copy is transcreated, not translated.** Each language is authored from a
-shared strategy, so the cultural referent can change and not just the words —
-a Diwali line becomes a *Pujo* line for Bengali, which is the correct campaign
-rather than the correct translation.
+shared strategy, so the cultural referent can change and not just the words — a
+Diwali line becomes a *Pujo* line for Bengali.
+
+---
 
 ## Status
 
-Phase 1 (vertical slice) is complete and tested: dimensions, safe zones, logo
-compositing, the Chromium text pipeline in seven locales, the campaign
-pipeline, the job API, and bundle export. 113 tests pass.
+**Phase 1 complete**: 121 tests pass. Dimensions, safe zones, logo compositing,
+the Chromium text pipeline in seven locales, the campaign pipeline, the job
+API, and bundle export.
 
-Not yet built: the live Foundry text model (copy comes from a stub), Azure AI
-Content Safety, C2PA provenance, the OCR zero-text gate, category compliance
+**Not yet built**: the live Foundry text model (copy comes from a stub), Azure
+AI Content Safety, C2PA provenance, the OCR zero-text gate, category compliance
 gates, and the React frontend.
+
+`MaiImageClient` is written and unit-tested but has **never touched the real
+endpoint** — mock mode is on by default and a test asserts it stays on.
+
+29 issues track everything: **11 built, 18 pending**. See
+[docs/roadmap.md](docs/roadmap.md).
