@@ -24,6 +24,8 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.copy.languages import DEFAULT_LOCALES, LOCALES
 from app.copy.strategy import BrandKit, CreativeBrief, CreativeStrategy, NegativeSpace
+from app.foundry.budget import BudgetedImageBackend, BudgetExceeded
+from app.foundry.cache import CachingImageBackend
 from app.foundry.image_client import MaiImageClient, MaiRateLimited
 from app.foundry.mock_client import MockImageClient
 from app.imaging.dimensions import FORMATS
@@ -33,7 +35,8 @@ from app.pipeline import CampaignPipeline, CampaignResult, export_bundle
 logger = logging.getLogger(__name__)
 
 JobState = Literal[
-    "queued", "generating", "compositing", "complete", "failed", "rate_limited"
+    "queued", "generating", "compositing", "complete",
+    "failed", "rate_limited", "budget_exceeded",
 ]
 
 
@@ -64,6 +67,41 @@ class GenerateRequest(BaseModel):
     #: Per-locale occasion overrides. The right festival differs by region --
     #: a Bengali audience's gifting peak is Durga Puja, not Diwali.
     occasion_by_locale: dict[str, str] = Field(default_factory=dict)
+    #: Generate one tall master and crop every other format out of it, turning
+    #: N generations into one. Costs some sharpness and composition control,
+    #: so it is opt-in rather than a silent default.
+    economy: bool = False
+
+
+def build_image_backend(settings) -> tuple[object, object | None, object | None]:
+    """Compose the image backend stack.
+
+    Ordering matters and is the whole point:
+
+        cache -> budget -> client
+
+    The cache sits outermost so a repeat request is served from disk *without*
+    consuming budget. The budget guard sits above the client so a retry loop
+    cannot quietly spend a month of credits.
+
+    Returns (backend, budget, cache) so the API can report spend.
+    """
+    base = MockImageClient() if settings.mock else MaiImageClient(settings)
+
+    if settings.mock:
+        # No spend to guard and no benefit to caching placeholders.
+        return base, None, None
+
+    budget = BudgetedImageBackend(
+        base,
+        storage_root=settings.storage_root,
+        daily_limit=settings.daily_limit,
+        total_limit=settings.total_limit,
+    )
+    cache = CachingImageBackend(
+        budget, root=settings.cache_root, enabled=settings.cache_enabled
+    )
+    return cache, budget, cache
 
 
 @asynccontextmanager
@@ -71,12 +109,17 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
     app.state.renderer = OverlayRenderer()
-    app.state.images = (
-        MockImageClient() if settings.mock else MaiImageClient(settings)
-    )
+    app.state.images, app.state.budget, app.state.cache = build_image_backend(settings)
+
     if settings.mock:
         logger.warning(
             "MAI_MOCK is on: images are placeholders, no Foundry calls are made"
+        )
+    else:
+        logger.warning(
+            "LIVE Foundry: %d of %d calls left today, %d of %d total",
+            app.state.budget.remaining_today, settings.daily_limit,
+            app.state.budget.remaining_total, settings.total_limit,
         )
     yield
     await app.state.renderer.aclose()
@@ -95,6 +138,44 @@ async def healthz() -> dict:
         "mock": settings.mock,
         "image_deployment": settings.image_deployment,
         "mai_rpm": settings.mai_rpm,
+    }
+
+
+@app.get("/api/usage")
+async def usage() -> dict:
+    """What has been spent, and what is left.
+
+    Worth checking before a big run: `deliverables_expected` in a campaign
+    response tells you the output, `image_calls_expected` tells you the cost.
+    """
+    settings = get_settings()
+    budget = getattr(app.state, "budget", None)
+    cache = getattr(app.state, "cache", None)
+
+    if budget is None:
+        return {
+            "mock": True,
+            "detail": "mock mode - no calls are billed and nothing is counted",
+        }
+
+    return {
+        "mock": False,
+        "today": {
+            "used": budget.usage.today,
+            "limit": budget.daily_limit,
+            "remaining": budget.remaining_today,
+        },
+        "total": {
+            "used": budget.usage.total,
+            "limit": budget.total_limit,
+            "remaining": budget.remaining_total,
+        },
+        "cache": {
+            "enabled": settings.cache_enabled,
+            "hits": cache.stats.hits if cache else 0,
+            "misses": cache.stats.misses if cache else 0,
+            "calls_saved": cache.stats.calls_saved if cache else 0,
+        },
     }
 
 
@@ -144,12 +225,17 @@ async def create_campaign(request: GenerateRequest) -> dict:
     JOBS[job.id] = job
     asyncio.create_task(_run_job(job, request))
 
-    # One generation per format; every locale reuses it.
+    # One generation per format, or exactly one in economy mode. Every locale
+    # reuses whichever base it lands on.
+    expected_calls = (
+        1 if (request.economy and len(request.formats) > 1) else len(request.formats)
+    )
     return {
         "job_id": job.id,
         "state": job.state,
-        "image_calls_expected": len(request.formats),
+        "image_calls_expected": expected_calls,
         "deliverables_expected": len(request.formats) * len(request.locales),
+        "economy": request.economy,
         "poll": f"/api/jobs/{job.id}",
     }
 
@@ -169,6 +255,9 @@ async def get_job(job_id: str) -> dict:
     }
     if job.result is not None:
         payload["image_calls"] = job.result.image_calls
+        payload["calls_saved"] = job.result.calls_saved
+        payload["economy"] = job.result.economy
+        payload["master_format"] = job.result.master_format
         payload["prompt"] = job.result.prompt
         payload["variants"] = [
             {
@@ -262,6 +351,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
             logo=logo,
             formats=tuple(request.formats),
             locales=tuple(request.locales),
+            economy=request.economy,
         )
 
         job.result = result
@@ -276,6 +366,12 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
         if result.review_queue:
             job.logs.append(f"{len(result.review_queue)} item(s) need review")
 
+    except BudgetExceeded as exc:
+        # Distinct from a failure: nothing is broken, we deliberately stopped
+        # short of spending more credit.
+        job.state = "budget_exceeded"
+        job.error = str(exc)
+        job.logs.append("refused before billing; no credit was spent")
     except MaiRateLimited as exc:
         job.state = "rate_limited"
         job.error = str(exc)

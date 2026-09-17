@@ -138,11 +138,16 @@ _FILL_PHRASE = {
 }
 
 
-def render_prompt(brief: CreativeBrief) -> str:
+def render_prompt(brief: CreativeBrief, *, crop_safe: bool = False) -> str:
     """Turn a CreativeBrief into an English MAI prompt.
 
     MAI-Image-2.6 declares English as its only supported language, so the
     prompt is always English regardless of the campaign's target locales.
+
+    ``crop_safe`` is for economy mode, where one tall master is cropped down to
+    every other format. The subject then has to survive having its top and
+    bottom removed, so the prompt asks for it to be centred with margin --
+    otherwise the square crop decapitates it.
     """
     space = brief.negative_space
     parts = [
@@ -152,6 +157,14 @@ def render_prompt(brief: CreativeBrief) -> str:
         parts.append(f"{brief.scene}.")
 
     parts.append(f"Composition: {brief.framing}, {brief.camera}.")
+
+    if crop_safe:
+        parts.append(
+            "Keep the subject centred within the middle half of the frame "
+            "vertically, fully inside the frame with generous margin above and "
+            "below, so the image can be cropped to a shorter shape without "
+            "cutting the subject."
+        )
 
     # Lead with the reserved area. The logo and every language's copy land
     # here, composited afterwards, so the model's only job regarding them is to

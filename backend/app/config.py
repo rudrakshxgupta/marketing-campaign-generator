@@ -62,6 +62,20 @@ class Settings:
     #: and the test suite never depends on a 2 RPM quota.
     mock: bool = field(default_factory=lambda: _flag("MAI_MOCK", True))
 
+    # --- Spend controls ----------------------------------------------------
+    #: Serve byte-identical repeat requests from disk. Users re-click
+    #: "Generate" constantly; without this each click is a fresh charge.
+    cache_enabled: bool = field(default_factory=lambda: _flag("MAI_CACHE", True))
+
+    #: Hard ceilings, enforced before the call and persisted across restarts.
+    #: Conservative by default: easier to raise a limit than to un-spend a credit.
+    daily_limit: int = field(
+        default_factory=lambda: int(os.environ.get("MAI_DAILY_LIMIT", "25"))
+    )
+    total_limit: int = field(
+        default_factory=lambda: int(os.environ.get("MAI_TOTAL_LIMIT", "200"))
+    )
+
     # --- Storage -----------------------------------------------------------
     storage_root: Path = field(
         default_factory=lambda: Path(
@@ -75,8 +89,12 @@ class Settings:
                 "FOUNDRY_ENDPOINT must be set when MAI_MOCK is off. "
                 "Set MAI_MOCK=1 to run without Azure."
             )
-        for sub in ("uploads", "base", "renders", "exports"):
+        for sub in ("uploads", "base", "renders", "exports", "cache"):
             (self.storage_root / sub).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def cache_root(self) -> Path:
+        return self.storage_root / "cache"
 
     @property
     def generations_url(self) -> str:

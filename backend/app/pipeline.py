@@ -64,10 +64,30 @@ class CampaignResult:
     variants: list[Variant] = field(default_factory=list)
     copy_pack: CopyPack | None = None
     image_calls: int = 0
+    economy: bool = False
+    #: Which format was generated and cropped down from, in economy mode.
+    master_format: str | None = None
 
     @property
     def review_queue(self) -> list[Variant]:
         return [v for v in self.variants if v.needs_review]
+
+    @property
+    def calls_saved(self) -> int:
+        """Generations avoided versus one call per format."""
+        formats = len(self.base_paths)
+        return max(0, formats - self.image_calls)
+
+
+def master_format_for(formats: tuple[str, ...]) -> str:
+    """The format every other requested format can be cropped out of.
+
+    Cropping only ever goes from taller to wider -- you can cut the top and
+    bottom off a 9:16 frame to get 4:5, but you cannot invent pixels to go the
+    other way. So the master is the *tallest* requested format, i.e. the one
+    with the smallest width/height ratio.
+    """
+    return min(formats, key=lambda key: plan_for(key).target_aspect)
 
 
 #: Where the copy block sits, per format. Story keeps well clear of the Reels
@@ -119,39 +139,68 @@ class CampaignPipeline:
         reference: bytes | None = None,
         reference_mime: str = "image/png",
         edit_instruction: str = "",
+        economy: bool = False,
     ) -> CampaignResult:
         out_dir = self._storage / "renders" / campaign_id
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt = render_prompt(brief)
-        result = CampaignResult(campaign_id=campaign_id, prompt=prompt)
+        # In economy mode the master is cropped down to every other format, so
+        # the subject has to be briefed to survive losing its top and bottom.
+        crop_safe = economy and len(formats) > 1
+        prompt = render_prompt(brief, crop_safe=crop_safe)
+        result = CampaignResult(
+            campaign_id=campaign_id, prompt=prompt, economy=economy
+        )
 
         # 1. Copy first. It costs no image quota, so a failure here should not
         #    burn a generation, and having it ready lets the UI show progress
         #    while the image is still queued.
         result.copy_pack = await self._writer.write(strategy, brand, locales)
 
-        for format_key in formats:
-            plan = plan_for(format_key)
+        # 2. Generate. Economy mode produces one master and crops every other
+        #    format out of it, turning N generations into one.
+        bases: dict[str, Image.Image] = {}
 
-            # 2. The single rate-limited call.
-            if reference is not None:
-                base_png = await self._generate_from_reference(
-                    reference, reference_mime, edit_instruction, plan
-                )
-            else:
-                generated = await self._images.generate(
-                    prompt=prompt, width=plan.gen_w, height=plan.gen_h
-                )
-                base_png = generated.png
+        if economy and len(formats) > 1:
+            master_key = master_format_for(formats)
+            result.master_format = master_key
+            master_plan = plan_for(master_key)
+
+            master_png = await self._generate_base(
+                prompt, master_plan, reference, reference_mime, edit_instruction
+            )
             result.image_calls += 1
+            master = finalize_base(master_png, master_plan)
+            bases[master_key] = master
 
-            base = finalize_base(base_png, plan)
+            for format_key in formats:
+                if format_key == master_key:
+                    continue
+                plan = plan_for(format_key)
+                # Cover-crop the master down. Only ever taller -> wider, which
+                # discards the top and bottom rather than inventing pixels.
+                bases[format_key] = _cover_crop(master, plan.target_w, plan.target_h)
+
+            logger.info(
+                "economy: generated %s once, cropped %d other format(s) from it",
+                master_key, len(formats) - 1,
+            )
+        else:
+            for format_key in formats:
+                plan = plan_for(format_key)
+                base_png = await self._generate_base(
+                    prompt, plan, reference, reference_mime, edit_instruction
+                )
+                result.image_calls += 1
+                bases[format_key] = finalize_base(base_png, plan)
+
+        # 3. Every locale reuses the base for its format.
+        for format_key in formats:
+            base = bases[format_key]
             base_path = out_dir / f"base_{format_key}.png"
             base_path.write_bytes(to_png(base))
             result.base_paths[format_key] = base_path
 
-            # 3. Every locale reuses that one base.
             for locale_key in locales:
                 variant = await self._compose_variant(
                     base=base,
@@ -164,10 +213,27 @@ class CampaignPipeline:
                 result.variants.append(variant)
 
         logger.info(
-            "campaign %s: %d image call(s) -> %d deliverables",
-            campaign_id, result.image_calls, len(result.variants),
+            "campaign %s: %d image call(s) -> %d deliverables (%d call(s) saved)",
+            campaign_id, result.image_calls, len(result.variants), result.calls_saved,
         )
         return result
+
+    async def _generate_base(
+        self,
+        prompt: str,
+        plan,
+        reference: bytes | None,
+        reference_mime: str,
+        edit_instruction: str,
+    ) -> bytes:
+        if reference is not None:
+            return await self._generate_from_reference(
+                reference, reference_mime, edit_instruction, plan
+            )
+        generated = await self._images.generate(
+            prompt=prompt, width=plan.gen_w, height=plan.gen_h
+        )
+        return generated.png
 
     async def _generate_from_reference(
         self, reference: bytes, mime: str, instruction: str, plan
