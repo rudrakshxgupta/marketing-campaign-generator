@@ -79,49 +79,50 @@ in [docs/api.md](docs/api.md).
 
 ## Connecting real Foundry
 
-The Azure CLI is **not** installed by default. MAI-Image-2.6 is available in
-**`southindia`** (and `uaenorth`), which suits an India-focused product.
+Three commands. The Azure CLI is **not** installed by default.
+
+```bash
+winget install --id Microsoft.AzureCLI -e
+```
+
+Open a **new** terminal so `PATH` refreshes, then sign in and provision. The
+resource name must be globally unique — it becomes your endpoint hostname.
 
 ```bash
 az login
-az group create --name mcg-rg --location southindia
-
-az cognitiveservices account create \
-  --name mcg-foundry --resource-group mcg-rg \
-  --kind AIServices --sku S0 --location southindia \
-  --custom-domain mcg-foundry --assign-identity --allow-project-management true
-
-az cognitiveservices account project create \
-  --name mcg-foundry --resource-group mcg-rg \
-  --project-name mcg-project --location southindia
-
-az cognitiveservices account deployment create \
-  --name mcg-foundry --resource-group mcg-rg \
-  --deployment-name mai-image-26 \
-  --model-name "MAI-Image-2.6" --model-format Microsoft \
-  --model-version 2026-07-31 --sku-name GlobalStandard --sku-capacity 1
 ```
 
-`--custom-domain` must be globally unique. Confirm what your subscription can
-actually deploy with `az cognitiveservices account list-models` before trusting
-the version string. Deploy `MAI-Image-2.6-Flash` too — a separate deployment
-gets its own RPM bucket, so routing drafts there roughly doubles usable
-throughput.
-
-Then copy `.env.example` to `.env`:
-
-```
-MAI_MOCK=0
-FOUNDRY_ENDPOINT=https://mcg-foundry.services.ai.azure.com
-MAI_IMAGE_DEPLOYMENT=mai-image-26
-MAI_RPM=2
+```powershell
+./scripts/setup_foundry.ps1 -ResourceName <your-unique-name> -WriteEnv
 ```
 
-Auth uses Entra ID via `DefaultAzureCredential` unless `FOUNDRY_API_KEY` is
-set. Prefer Entra — there is then no key to leak or rotate.
+The script checks prerequisites, creates the resource and project, confirms
+MAI-Image-2.6 is actually offered to your subscription *before* deploying,
+deploys both 2.6 and 2.6-Flash, and writes your `.env`. Add `-WhatIf` to see
+what it would do without creating anything.
 
-**File the quota-increase request on day one.** Priority goes to accounts
-already using their allocation, so the clock starts when you begin generating.
+It deploys to **`southindia`** by default — one of only two regions carrying
+MAI-Image-2.6, and a good fit for an India-focused product.
+
+Then verify, and answer the questions the documentation cannot:
+
+```bash
+cd backend && ../.venv/Scripts/python scripts/probe_foundry.py
+```
+
+This measures real generation latency, checks whether output carries C2PA
+credentials, confirms the edits endpoint's output geometry, and writes a report
+you can paste into
+[#29](https://github.com/rudrakshxgupta/marketing-campaign-generator/issues/29).
+It costs **3 image calls** by default and tells you exactly how many it used.
+
+Auth uses Entra ID via `DefaultAzureCredential` — your `az login`. No API key
+is needed, and none should be used in production.
+
+> **File the quota-increase request the same day**:
+> [aka.ms/oai/stuquotarequest](https://aka.ms/oai/stuquotarequest). Priority
+> goes to accounts already using their allocation, so the clock starts when you
+> begin generating, not when you ask.
 
 > ⚠️ **MAI image models are public preview**: no SLA, and Microsoft's own docs
 > say not recommended for production workloads. That is a business risk to
