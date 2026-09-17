@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Chromium launch costs hundreds of milliseconds, so the renderer fixture is
+# module-scoped. The event loop has to match, or the browser is created in one
+# loop and used from another.
+asyncio_default_fixture_loop_scope = "module"
+asyncio_default_test_loop_scope = "module"

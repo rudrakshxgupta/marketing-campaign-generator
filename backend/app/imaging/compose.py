@@ -1,0 +1,323 @@
+"""Deterministic image composition: crop, upscale, logo.
+
+The logo is composited here from the brand's real file and is never described
+to the image model. A diffusion model produces a *plausible* logo, which is a
+wrong logo -- subtly wrong letterforms that still ship -- and describing a mark
+in a prompt is asking the model to reproduce a trademark, which is one of the
+risks Microsoft's own responsible-AI notes call out for these models.
+
+Compositing instead makes the mark byte-exact, instant, free, and re-renderable
+the moment the brand updates its logo.
+"""
+
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass
+from typing import Literal
+
+from PIL import Image, ImageDraw
+
+from app.imaging.dimensions import GenerationPlan
+from app.imaging.safezones import assert_within, safe_rect
+
+Anchor = Literal[
+    "top_left", "top_right", "bottom_left", "bottom_right", "bottom_center"
+]
+
+#: Above this mean luminance the background is light, so the mark must be dark.
+LIGHT_BACKGROUND = 0.62
+#: Below this it is dark, so the mark must be light.
+DARK_BACKGROUND = 0.38
+#: WCAG AA for graphical objects. Below this we add a scrim.
+MIN_CONTRAST = 4.5
+
+
+def load_png(data: bytes) -> Image.Image:
+    return Image.open(io.BytesIO(data))
+
+
+def to_png(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def finalize_base(png: bytes, plan: GenerationPlan) -> Image.Image:
+    """Crop the generated frame to the delivery aspect, then scale to size.
+
+    Order matters: crop first so we never scale pixels we are about to discard.
+    """
+    with load_png(png) as raw:
+        image = raw.convert("RGB")
+
+    if (image.width, image.height) != (plan.gen_w, plan.gen_h):
+        raise ValueError(
+            f"generated image is {image.width}x{image.height}, "
+            f"expected {plan.gen_w}x{plan.gen_h}"
+        )
+
+    image = image.crop(plan.crop_box())
+    if (image.width, image.height) != (plan.target_w, plan.target_h):
+        # Lanczos: the story format is the worst case at ~1.41x, where cheaper
+        # filters visibly soften edges.
+        image = image.resize((plan.target_w, plan.target_h), Image.LANCZOS)
+    return image
+
+
+# --------------------------------------------------------------------------
+# Luminance and contrast
+# --------------------------------------------------------------------------
+
+def _linearize(channel: float) -> float:
+    """sRGB -> linear light, per WCAG."""
+    return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(rgb: tuple[float, float, float]) -> float:
+    r, g, b = (_linearize(c / 255.0) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    la, lb = relative_luminance(a), relative_luminance(b)
+    lighter, darker = max(la, lb), min(la, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def patch_luminance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """Mean relative luminance of a region, used to choose the logo variant."""
+    patch = image.crop(box).convert("RGB")
+    # Downsample before averaging; we want the perceived tone of the area, not
+    # a pixel-exact statistic.
+    patch = patch.resize((16, 16), Image.BOX)
+    raw = patch.tobytes()
+    total = sum(
+        relative_luminance((raw[i], raw[i + 1], raw[i + 2]))
+        for i in range(0, len(raw), 3)
+    )
+    return total / (len(raw) // 3)
+
+
+# --------------------------------------------------------------------------
+# Logo
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class LogoPlacement:
+    box: tuple[int, int, int, int]
+    variant: str
+    scrim_alpha: float
+    background_luminance: float
+    contrast: float
+
+
+def derive_variants(logo: Image.Image) -> dict[str, Image.Image]:
+    """Original plus knockout mono versions.
+
+    Most brands supply one file. A white and a black knockout cover the cases
+    where the original would disappear into the background.
+    """
+    logo = logo.convert("RGBA")
+    alpha = logo.getchannel("A")
+
+    def knockout(colour: tuple[int, int, int]) -> Image.Image:
+        solid = Image.new("RGBA", logo.size, (*colour, 255))
+        solid.putalpha(alpha)
+        return solid
+
+    return {
+        "original": logo,
+        "light": knockout((255, 255, 255)),
+        "dark": knockout((17, 17, 17)),
+    }
+
+
+def logo_box(
+    *,
+    canvas_w: int,
+    canvas_h: int,
+    logo_w: int,
+    logo_h: int,
+    anchor: Anchor,
+    format_key: str,
+    width_pct: float = 0.12,
+    padding_pct: float = 0.02,
+) -> tuple[int, int, int, int]:
+    """Where the logo goes, in absolute pixels.
+
+    Anchored inside the *safe rect*, not the canvas. Anchoring to the canvas
+    edge looks right in a design tool and then lands under the Reels caption
+    tray or the feed handle row. Deriving the position from the safe rect makes
+    compliance structural rather than something we check afterwards.
+
+    Size is a fraction of canvas width so the mark reads consistently across
+    formats; padding is a fraction of the short edge, applied inward from the
+    safe rect.
+    """
+    target_w = max(1, round(canvas_w * width_pct))
+    scale = target_w / logo_w
+    target_h = max(1, round(logo_h * scale))
+
+    safe = safe_rect(canvas_w, canvas_h, format_key)
+    pad = round(min(canvas_w, canvas_h) * padding_pct)
+
+    if anchor.endswith("left"):
+        left = safe.left + pad
+    elif anchor.endswith("center"):
+        left = safe.left + (safe.width - target_w) // 2
+    else:
+        left = safe.right - target_w - pad
+
+    top = safe.top + pad if anchor.startswith("top") else safe.bottom - target_h - pad
+    return (left, top, left + target_w, top + target_h)
+
+
+def choose_variant(
+    base: Image.Image, box: tuple[int, int, int, int], variants: dict[str, Image.Image]
+) -> tuple[str, float, float]:
+    """Pick the logo variant with the best contrast against what is behind it.
+
+    Returns (variant name, scrim alpha, achieved contrast).
+    """
+    luminance = patch_luminance(base, box)
+    background = _luminance_to_rgb(luminance)
+
+    candidates = {
+        "dark": (17, 17, 17),
+        "light": (255, 255, 255),
+    }
+    scored = {
+        name: contrast_ratio(ink, background) for name, ink in candidates.items()
+    }
+    variant = max(scored, key=scored.__getitem__)
+    achieved = scored[variant]
+
+    if achieved >= MIN_CONTRAST:
+        return variant, 0.0, achieved
+
+    # Mid-tone or busy background: darken (or lighten) behind the mark until it
+    # clears AA. A scrim treats the *background*, unlike a drop shadow, which
+    # most brand guidelines forbid on the mark itself.
+    for alpha in (0.35, 0.5, 0.65, 0.8):
+        if variant == "light":
+            scrimmed = _blend(background, (0, 0, 0), alpha)
+        else:
+            scrimmed = _blend(background, (255, 255, 255), alpha)
+        achieved = contrast_ratio(candidates[variant], scrimmed)
+        if achieved >= MIN_CONTRAST:
+            return variant, alpha, achieved
+
+    return variant, 0.8, achieved
+
+
+def _luminance_to_rgb(luminance: float) -> tuple[float, float, float]:
+    """A grey of equivalent relative luminance, for contrast maths."""
+    # Invert the sRGB transfer function for a neutral grey.
+    if luminance <= 0.0031308:
+        channel = luminance * 12.92
+    else:
+        channel = 1.055 * (luminance ** (1 / 2.4)) - 0.055
+    value = max(0.0, min(255.0, channel * 255.0))
+    return (value, value, value)
+
+
+def _blend(
+    base: tuple[float, float, float], over: tuple[float, float, float], alpha: float
+) -> tuple[float, float, float]:
+    return tuple(b * (1 - alpha) + o * alpha for b, o in zip(base, over))
+
+
+def composite_logo(
+    base: Image.Image,
+    logo: Image.Image,
+    *,
+    format_key: str,
+    anchor: Anchor = "bottom_right",
+    width_pct: float = 0.12,
+    padding_pct: float = 0.02,
+    clear_space_ratio: float = 0.25,
+    enforce_safe_zone: bool = True,
+) -> tuple[Image.Image, LogoPlacement]:
+    """Place the brand mark, choosing its variant from what sits behind it."""
+    canvas = base.convert("RGBA")
+    variants = derive_variants(logo)
+    source = variants["original"]
+
+    box = logo_box(
+        canvas_w=canvas.width,
+        canvas_h=canvas.height,
+        logo_w=source.width,
+        logo_h=source.height,
+        anchor=anchor,
+        format_key=format_key,
+        width_pct=width_pct,
+        padding_pct=padding_pct,
+    )
+
+    if enforce_safe_zone:
+        assert_within(
+            box,
+            width=canvas.width,
+            height=canvas.height,
+            format_key=format_key,
+            what="logo",
+        )
+
+    variant, scrim_alpha, achieved = choose_variant(canvas, box, variants)
+    luminance = patch_luminance(canvas, box)
+
+    if scrim_alpha > 0:
+        canvas = _apply_scrim(canvas, box, variant, scrim_alpha, clear_space_ratio)
+
+    mark = variants[variant].resize(
+        (box[2] - box[0], box[3] - box[1]), Image.LANCZOS
+    )
+    canvas.alpha_composite(mark, (box[0], box[1]))
+
+    return canvas, LogoPlacement(
+        box=box,
+        variant=variant,
+        scrim_alpha=scrim_alpha,
+        background_luminance=luminance,
+        contrast=achieved,
+    )
+
+
+def _apply_scrim(
+    canvas: Image.Image,
+    box: tuple[int, int, int, int],
+    variant: str,
+    alpha: float,
+    clear_space_ratio: float,
+) -> Image.Image:
+    """Soften the area behind the mark so it clears the contrast floor."""
+    left, top, right, bottom = box
+    pad = round((bottom - top) * clear_space_ratio)
+    region = (
+        max(0, left - pad),
+        max(0, top - pad),
+        min(canvas.width, right + pad),
+        min(canvas.height, bottom + pad),
+    )
+
+    colour = (0, 0, 0) if variant == "light" else (255, 255, 255)
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    radius = max(4, (region[3] - region[1]) // 6)
+    draw.rounded_rectangle(
+        region, radius=radius, fill=(*colour, int(alpha * 255))
+    )
+    return Image.alpha_composite(canvas, layer)
+
+
+def composite_overlay(base: Image.Image, overlay_png: bytes) -> Image.Image:
+    """Lay a transparent text overlay (rendered by Chromium) over the base."""
+    with load_png(overlay_png) as raw:
+        overlay = raw.convert("RGBA")
+    if overlay.size != base.size:
+        raise ValueError(
+            f"overlay is {overlay.size}, base is {base.size}; "
+            "the overlay must be rendered at the delivery canvas size"
+        )
+    return Image.alpha_composite(base.convert("RGBA"), overlay)

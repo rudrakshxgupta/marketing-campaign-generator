@@ -1,0 +1,18 @@
+# Runtime
+fastapi
+uvicorn[standard]
+pydantic>=2
+python-multipart
+httpx
+azure-identity
+SQLAlchemy>=2
+Pillow>=11
+
+# Indic text overlay. Pillow's own text layout cannot shape Devanagari/Tamil
+# (PIL.features.check("raqm") is False on Windows), so text is rendered by
+# headless Chromium, which brings HarfBuzz shaping and ICU line breaking.
+playwright
+
+# Dev
+pytest
+pytest-asyncio
