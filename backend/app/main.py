@@ -9,6 +9,7 @@ polls.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -30,6 +31,7 @@ from app.foundry.image_client import MaiImageClient, MaiRateLimited
 from app.foundry.mock_client import MockImageClient
 from app.imaging.dimensions import FORMATS
 from app.imaging.overlay import OverlayRenderer
+from app.imaging.style import apply_style, extract_style
 from app.pipeline import CampaignPipeline, CampaignResult, export_bundle
 
 logger = logging.getLogger(__name__)
@@ -53,6 +55,32 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 
+#: In-flight job tasks, so shutdown can wait for them rather than pulling the
+#: renderer and HTTP client out from under a job that is still writing.
+RUNNING: set[asyncio.Task] = set()
+
+
+def _spawn(job: Job, request: GenerateRequest) -> None:
+    task = asyncio.create_task(_run_job(job, request))
+    RUNNING.add(task)
+    task.add_done_callback(RUNNING.discard)
+
+
+async def _drain(timeout: float = 30.0) -> None:
+    """Let running jobs finish, then cancel whatever is left.
+
+    Without this, closing the browser while a job is mid-render leaves the job
+    awaiting a page that will never respond.
+    """
+    if not RUNNING:
+        return
+    pending = set(RUNNING)
+    done, still_running = await asyncio.wait(pending, timeout=timeout)
+    for task in still_running:
+        task.cancel()
+    if still_running:
+        await asyncio.gather(*still_running, return_exceptions=True)
+
 
 class GenerateRequest(BaseModel):
     brief: str = Field(..., description="What the picture should show")
@@ -71,6 +99,22 @@ class GenerateRequest(BaseModel):
     #: N generations into one. Costs some sharpness and composition control,
     #: so it is opt-in rather than a silent default.
     economy: bool = False
+
+    # --- reference image ---------------------------------------------------
+    #: From POST /api/uploads/reference.
+    reference_id: str | None = None
+    #: "inspiration" matches the look and builds a fresh image around your
+    #: subject. "edit" keeps the actual photo and changes what you describe.
+    #:
+    #: Default to inspiration: edit mode derives the output pixel-for-pixel
+    #: from the input, so if the user uploaded someone else's ad it produces a
+    #: derivative work. It also inherits the input's composition, which means
+    #: our safe zones are no longer guaranteed.
+    reference_mode: Literal["inspiration", "edit"] = "inspiration"
+    #: What to change, for edit mode.
+    edit_instruction: str = ""
+    #: Required for edit mode. The user asserting they may use this image.
+    rights_confirmed: bool = False
 
 
 def build_image_backend(settings) -> tuple[object, object | None, object | None]:
@@ -122,6 +166,9 @@ async def lifespan(app: FastAPI):
             app.state.budget.remaining_total, settings.total_limit,
         )
     yield
+
+    # Wait for in-flight jobs before tearing down the resources they are using.
+    await _drain()
     await app.state.renderer.aclose()
     if hasattr(app.state.images, "aclose"):
         await app.state.images.aclose()
@@ -221,9 +268,21 @@ async def create_campaign(request: GenerateRequest) -> dict:
     if unknown_locales:
         raise HTTPException(400, f"unknown locales: {sorted(unknown_locales)}")
 
+    if request.reference_mode == "edit":
+        if not request.reference_id:
+            raise HTTPException(400, "edit mode needs a reference_id")
+        # Edit mode reproduces the uploaded image pixel-for-pixel, so the user
+        # has to assert they may use it. This is not boilerplate.
+        if not request.rights_confirmed:
+            raise HTTPException(
+                400,
+                "edit mode requires rights_confirmed: you must have the rights "
+                "to the image you uploaded",
+            )
+
     job = Job(id=uuid.uuid4().hex[:12])
     JOBS[job.id] = job
-    asyncio.create_task(_run_job(job, request))
+    _spawn(job, request)
 
     # One generation per format, or exactly one in economy mode. Every locale
     # reuses whichever base it lands on.
@@ -236,6 +295,7 @@ async def create_campaign(request: GenerateRequest) -> dict:
         "image_calls_expected": expected_calls,
         "deliverables_expected": len(request.formats) * len(request.locales),
         "economy": request.economy,
+        "reference_mode": request.reference_mode if request.reference_id else None,
         "poll": f"/api/jobs/{job.id}",
     }
 
@@ -288,6 +348,52 @@ async def download_bundle(job_id: str) -> FileResponse:
     )
 
 
+@app.post("/api/uploads/reference")
+async def upload_reference(file: UploadFile) -> dict:
+    """Store a reference image and report what we can read from it.
+
+    The style is measured here, locally, with no model call — so the user sees
+    immediately what "use as inspiration" is actually going to carry across.
+    """
+    settings = get_settings()
+    data = await file.read()
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image.load()
+            prepared = image.convert("RGB")
+    except Exception as exc:
+        raise HTTPException(400, f"not a readable image: {exc}") from exc
+
+    reference_id = uuid.uuid4().hex[:12]
+    path = settings.storage_root / "uploads" / f"ref_{reference_id}.png"
+    # Re-encoded, which normalises the format and strips EXIF or any embedded
+    # payload from a file we did not create.
+    prepared.save(path, format="PNG")
+
+    profile = extract_style(prepared)
+    return {
+        "reference_id": reference_id,
+        "width": prepared.width,
+        "height": prepared.height,
+        "orientation": profile.orientation,
+        "style": {
+            "palette": list(profile.palette_names),
+            "palette_hex": list(profile.palette_hex),
+            "brightness": profile.brightness,
+            "contrast": profile.contrast,
+            "saturation": profile.saturation,
+            "temperature": profile.temperature,
+            "lighting": profile.describe_lighting(),
+            "mood": list(profile.describe_mood()),
+        },
+        "modes": {
+            "inspiration": "Match this look, build a fresh image around your subject.",
+            "edit": "Keep this exact photo and change what you describe. "
+                    "Requires rights_confirmed.",
+        },
+    }
+
+
 @app.post("/api/uploads/logo")
 async def upload_logo(file: UploadFile) -> dict:
     """Store a brand logo.
@@ -336,6 +442,28 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
         )
         brand = BrandKit(name=request.brand_name, mandatory_line=request.mandatory_line)
 
+        # Reference image, if one was uploaded.
+        reference_bytes: bytes | None = None
+        if request.reference_id:
+            ref_path = (
+                settings.storage_root / "uploads" / f"ref_{request.reference_id}.png"
+            )
+            if not ref_path.is_file():
+                raise FileNotFoundError(f"reference {request.reference_id} not found")
+
+            if request.reference_mode == "inspiration":
+                # Measure the look and fold it into the brief, then run the
+                # ordinary text path. The output then obeys our layout, aspect
+                # ratio and safe zones, which edit mode cannot guarantee.
+                with Image.open(ref_path) as reference:
+                    brief = apply_style(brief, extract_style(reference))
+                job.logs.append(
+                    f"reference used as inspiration: {', '.join(brief.palette_names)}"
+                )
+            else:
+                reference_bytes = ref_path.read_bytes()
+                job.logs.append("reference edited directly; rights confirmed by user")
+
         logo_path = next(
             iter(sorted((settings.storage_root / "uploads").glob("logo_*.png"))), None
         )
@@ -352,6 +480,8 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
             formats=tuple(request.formats),
             locales=tuple(request.locales),
             economy=request.economy,
+            reference=reference_bytes,
+            edit_instruction=request.edit_instruction,
         )
 
         job.result = result
