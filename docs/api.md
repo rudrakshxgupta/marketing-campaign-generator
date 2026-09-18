@@ -77,7 +77,11 @@ panel — see [architecture.md](architecture.md#languages-as-a-triple).
 | `proposition`, `benefit` | sample text | Drive the copy, not the image |
 | `occasion` | `""` | Campaign occasion |
 | `occasion_by_locale` | `{}` | **Per-locale override.** A Bengali audience's gifting peak is Durga Puja, not Diwali — this is how the referent changes rather than just the words |
-| `formats` | `["portrait"]` | **One model call each** |
+| `formats` | `["portrait"]` | One model call each, or **one total** with `economy` |
+| `economy` | `false` | Generate one tall master and crop every other format out of it. Trades sharpness for calls |
+| `reference_id` | `null` | From `POST /api/uploads/reference` |
+| `reference_mode` | `"inspiration"` | `inspiration` matches the look; `edit` keeps the actual photo |
+| `rights_confirmed` | `false` | **Required for `edit`** — that mode reproduces the upload pixel-for-pixel |
 | `locales` | all 7 | **Free** — composited from the same base |
 | `facts` | `[]` | The only claims copy may state. Nothing outside this list may be invented |
 
@@ -96,8 +100,64 @@ Response:
 `image_calls_expected` is `len(formats)` and `deliverables_expected` is
 `formats × locales`. The gap between those two numbers is the architecture.
 
-Errors: `400` for an unknown format or locale, listing what it did not
-recognise.
+Errors: `400` for an unknown format or locale (listing what it did not
+recognise), for `edit` mode without a `reference_id`, and for `edit` mode
+without `rights_confirmed`.
+
+---
+
+## `POST /api/uploads/reference`
+
+`multipart/form-data`, field `file`. Returns the style read from the image —
+**measured locally, no model call, no quota** — so the user can see what
+"inspiration" will carry across before spending anything.
+
+```json
+{
+  "reference_id": "9f8e7d6c5b4a",
+  "orientation": "portrait",
+  "style": {
+    "palette": ["deep espresso brown", "warm antique gold", "olive"],
+    "palette_hex": ["#302014", "#C49844", "#807A3E"],
+    "brightness": "dark", "contrast": "medium",
+    "saturation": "vivid", "temperature": "warm",
+    "lighting": "moody low-key light with soft shadows",
+    "mood": ["moody", "warm", "bold"]
+  }
+}
+```
+
+The palette reaches the prompt as **colour words, not hex** — diffusion models
+respond to "deep saffron" far better than to `#FF6B00`.
+
+### The two modes
+
+**`inspiration`** (default) folds the measured style into the brief and runs
+the ordinary text path. Output still obeys our layout, aspect ratio and safe
+zones. The subject stays whatever the user asked for, and the reference's own
+silhouette, marks and faces go into `must_not_depict` — that separation is the
+line between "in the style of" and a copy.
+
+**`edit`** sends the upload to `/mai/v1/images/edits` directly. It reproduces
+the image pixel-for-pixel, so it requires `rights_confirmed: true`. Defaulting
+to it would quietly turn whatever a user uploaded into a derivative work.
+
+---
+
+## `GET /api/usage`
+
+```json
+{
+  "mock": false,
+  "today": {"used": 3, "limit": 25, "remaining": 22},
+  "total": {"used": 3, "limit": 200, "remaining": 197},
+  "cache": {"enabled": true, "hits": 4, "misses": 3, "calls_saved": 4}
+}
+```
+
+Worth checking before a big run. In a campaign response,
+`deliverables_expected` tells you the output and `image_calls_expected` tells
+you the cost.
 
 ---
 
@@ -130,11 +190,12 @@ recognise.
 ```
 
 States: `queued`, `generating`, `compositing`, `complete`, `failed`,
-`rate_limited`.
+`rate_limited`, `budget_exceeded`.
 
-`rate_limited` is distinct from `failed` on purpose — it means the deployment
-is at its RPM ceiling and retrying later will work, which is a different
-message to the user.
+The last two are distinct from `failed` on purpose. `rate_limited` means the
+deployment is at its RPM ceiling and retrying later will work.
+`budget_exceeded` means we refused *before* billing — nothing is broken, and no
+credit was spent.
 
 `headline_used` may differ from the requested headline: the auto-fitter selects
 a shorter alternate rather than shrinking type below the legible minimum for
@@ -203,6 +264,9 @@ Copy `.env.example` to `.env`.
 | `MAI_IMAGE_DEPLOYMENT` | `mai-image-26` | Deployment name, **not** model name |
 | `MAI_DRAFT_DEPLOYMENT` | `mai-image-26-flash` | Separate deployment → separate RPM bucket |
 | `MAI_RPM` | `2` | Token bucket rate. Match your tier |
+| `MAI_CACHE` | `1` | Serve byte-identical repeats from disk |
+| `MAI_DAILY_LIMIT` | `25` | Hard ceiling, enforced before the call |
+| `MAI_TOTAL_LIMIT` | `200` | Hard lifetime ceiling |
 | `MAI_MAX_ATTEMPTS` | `5` | Retries on 429/5xx |
 | `MAI_TIMEOUT_S` | `180` | Per-request |
 | `STORAGE_ROOT` | `./storage` | Uploads, bases, renders, exports |

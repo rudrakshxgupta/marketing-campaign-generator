@@ -84,6 +84,11 @@
       "name": "risk: preview-api",
       "color": "FEF2C0",
       "description": "Depends on a public-preview API with no SLA"
+    },
+    {
+      "name": "area: cost",
+      "color": "FBCA04",
+      "description": "Protecting the image quota"
     }
   ],
   "milestones": [
@@ -313,9 +318,9 @@
     },
     {
       "title": "Reference-image path in the API with both sub-modes",
-      "state": "open",
+      "state": "closed",
       "labels": [
-        "status: pending",
+        "status: done",
         "area: api",
         "phase: 2",
         "priority: high"
@@ -370,9 +375,9 @@
     },
     {
       "title": "Economy mode: one 9:16 master cropped down to every other format",
-      "state": "open",
+      "state": "closed",
       "labels": [
-        "status: pending",
+        "status: done",
         "area: imaging",
         "phase: 4"
       ],
@@ -435,6 +440,89 @@
       ],
       "milestone": "Phase 2 - live MAI",
       "body": "`MaiImageClient` is written but has **never been exercised against the real endpoint** — mock mode is on by default and a test asserts it stays on. These cannot be answered from the documentation and need a deployment.\n\n- [ ] **Latency** at 1024x1024 for 2.6 vs 2.6-Flash. The entire interactive UX budget depends on this and the docs give no figures\n- [ ] **C2PA**: does MAI output carry Content Credentials? Documented for Azure OpenAI image models, silent for MAI. Check with `c2patool` — do not assume\n- [ ] **Content filter**: can a custom filter configuration attach to a `--model-format Microsoft` deployment, or is it default-filter-only as with GPT-image-1?\n- [ ] **RPM buckets**: do separate draft/final deployments each get their own allocation? The Flash routing strategy depends on it\n- [ ] **Edits output geometry**: the endpoint takes no width/height — confirm output follows the input, which is what the mock assumes\n- [ ] **Translator transliterate** coverage for `ta` and `te` (`GET /languages?scope=transliteration`), needed for romanised variants\n\n**Also on day one**: file the quota-increase request. Priority goes to customers actively using existing quota, so generate steadily from the start.\n\n**Acceptance**: one real generation at 912x1140 that decodes, matches the requested dimensions, and passes the text-free check."
+    },
+    {
+      "title": "Cache generated images so a repeat request is never paid for twice",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: cost",
+        "area: foundry",
+        "phase: 2",
+        "priority: high"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "Image generation is the dominant cost in the system and the quota is small, so the same request must never be billed twice.\n\nUsers re-click Generate constantly - while waiting, after a page refresh, after a restart. Without a cache each of those is a fresh charge for a byte-identical result.\n\n**The key covers everything that changes the output**: prompt, model, dimensions, draft flag, and the 2.6-only flags. It deliberately does **not** include a timestamp or a seed, so a repeated request is a hit rather than a new variation. Wanting a different result is an explicit action (`bypass_cache=True`), never an accident of impatience.\n\nDeliberately **not** a semantic cache. Two briefs being 95% similar does not mean the user wants the same picture - that is a correctness bug dressed up as an optimisation.\n\nWrites go to a temp name and are then moved, so a crash mid-write cannot leave a truncated PNG that later reads as a valid hit.\n\n**Files**: `backend/app/foundry/cache.py`\n\n**Verified**: survives a restart; draft and final never share an entry; edits are keyed on the input image bytes; the same prompt at a different size is correctly a miss."
+    },
+    {
+      "title": "Hard spend ceiling, enforced before the call and persisted",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: cost",
+        "area: foundry",
+        "phase: 2",
+        "priority: high"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "The failure this exists to prevent is not a user generating too much - it is a retry loop, a runaway test, or a queue bug quietly spending a month of credits in an afternoon.\n\nSo the limit is checked **before** the call, counted on disk so it survives a restart, and **refuses rather than warns**.\n\n- Conservative defaults: 25/day, 200 total. Easier to raise a limit you hit than to un-spend a credit.\n- **Failed calls are not counted.** A 429 or a network error costs nothing, so charging for it would make the ledger lie.\n- The daily counter rolls over at midnight; the running total does not.\n- A corrupt ledger starts fresh rather than crashing the service.\n- Every call is appended to `usage.log` with what it was for, giving an honest per-campaign cost figure without waiting for the Azure bill.\n\nComposed as `cache -> budget -> client`, so **a cache hit consumes no budget**. That ordering is the whole point and is covered by a test.\n\nA refused call gets its own job state, `budget_exceeded`, distinct from `failed` - nothing is broken, we deliberately stopped short.\n\n`GET /api/usage` reports spend, headroom and cache savings.\n\n**Files**: `backend/app/foundry/budget.py`, `backend/tests/test_spend.py`"
+    },
+    {
+      "title": "Foundry provisioning and probe tooling",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: foundry",
+        "area: infra",
+        "phase: 2"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "Two scripts so connecting Azure is minutes rather than an afternoon of copy-pasting CLI commands. Neither handles credentials - `az login` stays with the user.\n\n**`scripts/setup_foundry.ps1`** provisions the resource group, Foundry resource, project and both deployments. It checks prerequisites first, and **confirms MAI-Image-2.6 is actually offered to the subscription before attempting a deployment** - these models are preview and access varies by account, so finding out at step 5 beats finding out halfway through. Prefers the version the service reports over the hard-coded guess. Supports `-WhatIf` and `-WriteEnv`.\n\n**`backend/scripts/probe_foundry.py`** answers the questions in #29. Quota-aware by design: 3 image calls by default, reports exactly how many it used, and writes a report to paste into the issue. `--rpm-test` adds 4 more for the bucket-independence check.\n\nBoth guard against being run in the wrong state - mock mode on, or no endpoint configured - with a clear message rather than a traceback."
+    },
+    {
+      "title": "Extract a reference image's style locally, with no model call",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: imaging",
+        "area: cost",
+        "phase: 2"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "When a user says \"make something like this\", they usually mean the *look* - palette, lighting, whether it is bright and airy or dark and moody - not the literal subject.\n\nAll of that is measurable from the pixels: palette via quantisation, brightness and contrast from a luminance histogram, saturation and colour temperature from channel spread, orientation from the aspect. No model call, no quota, no latency.\n\nA vision model would add richer description (camera angle, prop density, styling), but the expensive part is not the part that matters most - and under a credit constraint, paying to learn \"this image is dark and warm\" is the wrong trade.\n\nOutput reaches the prompt as **colour words, not hex codes**: diffusion models respond to \"deep saffron\" far better than to `#FF6B00`. The vocabulary is chosen for marketing imagery rather than completeness - words a photographer or art director would actually use, which is also what the model was trained on.\n\nNearest-colour matching weights the channels roughly by luminance contribution; plain RGB distance calls navy and forest green neighbours.\n\n**It never extracts the subject.** Copying the silhouette of an image a user uploaded is how \"inspired by\" becomes a derivative work, so the reference's own silhouette, marks and faces go straight into `must_not_depict`.\n\n**Files**: `backend/app/imaging/style.py`"
+    },
+    {
+      "title": "Drain in-flight jobs on shutdown",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: api",
+        "phase: 2"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "Background job tasks were fire-and-forget, so a shutdown could close the browser and HTTP client out from under a job still rendering into them. The job then awaited a page that would never respond - an indefinite hang, not an error.\n\nFound by a test that started a campaign without awaiting it: the suite hung forever instead of finishing. Now 5 seconds.\n\nIn-flight tasks are tracked in a set; shutdown waits for them, then cancels whatever is left after a timeout. Real behaviour, not a test fixture - a deploy or a restart should not corrupt work in progress.\n\n**Files**: `backend/app/main.py`"
+    },
+    {
+      "title": "Upgrade reference style extraction with a vision model",
+      "state": "open",
+      "labels": [
+        "status: pending",
+        "area: imaging",
+        "phase: 3"
+      ],
+      "milestone": "Phase 3 - languages",
+      "body": "Local extraction covers palette, brightness, contrast, saturation, temperature and orientation. It cannot see **camera angle, lens feel, prop density, surface material, styling, or depth of field** - all things a user pointing at a reference often means.\n\nA vision model returning a structured `StyleProfile` would. Worth doing once credits are less tight, and worth measuring against the local extractor rather than assuming it is better.\n\n**Constraints that must carry over**\n\n- Schema-constrained JSON output only. There must be no free-text field in which instruction text from an uploaded image could travel - a reference containing \"ignore previous instructions\" is textbook indirect injection.\n- It must return `do_not_copy` entries for any identifiable silhouette, mark or face, exactly as the local extractor does.\n- It must **not** extract the subject. That separation is what keeps this \"in the style of\".\n\n**Do not make it a hard dependency of the render path.** Fall back to local extraction when the call fails or is slow; the product should degrade, not stop."
+    },
+    {
+      "title": "Pre-select the reference mode from the user's phrasing",
+      "state": "open",
+      "labels": [
+        "status: pending",
+        "area: api",
+        "phase: 4"
+      ],
+      "milestone": "Phase 4 - compliance and formats",
+      "body": "The two reference modes behave very differently and the user has to choose between them. A cheap classifier could pre-select the likely one so the common case is a single click rather than a decision.\n\n- \"remove the\", \"change the background\", \"make the sky\", \"keep the product\" -> **edit**\n- \"like this\", \"similar vibe\", \"in this style\", \"inspired by\" -> **inspiration**\n\n**It must never override an explicit choice**, and it must never flip the default *to* edit without the user actively confirming - edit mode carries the rights attestation and the derivative-work exposure, so an inferred selection cannot be what unlocks it.\n\nThis is a UI affordance, not an authorisation step."
     }
   ]
 }

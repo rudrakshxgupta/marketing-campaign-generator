@@ -179,18 +179,38 @@ Diwali line becomes a *Pujo* line for Bengali.
 
 ---
 
+## Spend controls
+
+Image generation is the dominant cost and the quota is small, so this is
+handled before anything touches Azure.
+
+| | |
+|---|---|
+| **Hard ceiling** | 25/day, 200 total. Checked *before* the call, persisted to disk, survives restarts. A retry loop cannot drain anything. |
+| **Failed calls are free** | A 429 or a network error is never charged to the ledger. |
+| **Cache** | Byte-identical repeats come from disk. Re-clicking Generate costs nothing. |
+| **Economy mode** | One tall master cropped down to every format. Measured: 4 formats went from 4 calls to 1. |
+
+`GET /api/usage` reports spend, headroom and calls saved. A refused call gets
+its own job state, `budget_exceeded` — nothing is broken, we deliberately
+stopped short.
+
+Raise the limits with `MAI_DAILY_LIMIT` and `MAI_TOTAL_LIMIT` once you are sure
+the spend is intended.
+
 ## Status
 
-**Phase 1 complete**: 121 tests pass. Dimensions, safe zones, logo compositing,
-the Chromium text pipeline in seven locales, the campaign pipeline, the job
-API, and bundle export.
+**155 tests pass.** Phase 1 is complete and most of Phase 2 with it:
+dimensions, safe zones, logo compositing, the Chromium text pipeline in seven
+locales, the campaign pipeline, the job API, bundle export, the spend controls
+above, and the reference-image path in both sub-modes.
 
-**Not yet built**: the live Foundry text model (copy comes from a stub), Azure
-AI Content Safety, C2PA provenance, the OCR zero-text gate, category compliance
-gates, and the React frontend.
+**Not yet built**: the live Foundry text model (copy comes from a stub),
+bundled fonts, Azure AI Content Safety, C2PA provenance, the OCR zero-text
+gate, category compliance gates, and the React frontend.
 
 `MaiImageClient` is written and unit-tested but has **never touched the real
 endpoint** — mock mode is on by default and a test asserts it stays on.
 
-29 issues track everything: **11 built, 18 pending**. See
+36 issues track everything: **18 built, 18 pending**. See
 [docs/roadmap.md](docs/roadmap.md).
