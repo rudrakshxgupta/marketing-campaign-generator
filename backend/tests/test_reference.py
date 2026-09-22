@@ -166,7 +166,7 @@ async def test_inspiration_mode_carries_the_palette_into_the_prompt(
         await client.post(
             "/api/campaigns",
             json={
-                "brief": "a glass bottle of coconut oil",
+                "product": "a glass bottle of coconut oil",
                 "formats": ["portrait"],
                 "locales": ["en"],
                 "reference_id": uploaded["reference_id"],
@@ -199,7 +199,7 @@ async def test_edit_mode_requires_a_rights_confirmation(client: AsyncClient) -> 
     response = await client.post(
         "/api/campaigns",
         json={
-            "brief": "a bottle",
+            "product": "a bottle",
             "formats": ["portrait"],
             "locales": ["en"],
             "reference_id": uploaded["reference_id"],
@@ -214,7 +214,7 @@ async def test_edit_mode_requires_a_rights_confirmation(client: AsyncClient) -> 
 async def test_edit_mode_needs_a_reference(client: AsyncClient) -> None:
     response = await client.post(
         "/api/campaigns",
-        json={"brief": "a bottle", "reference_mode": "edit", "rights_confirmed": True},
+        json={"product": "a bottle", "reference_mode": "edit", "rights_confirmed": True},
     )
     assert response.status_code == 400
 
@@ -231,7 +231,7 @@ async def test_edit_mode_runs_when_rights_are_confirmed(client: AsyncClient) -> 
         await client.post(
             "/api/campaigns",
             json={
-                "brief": "a bottle",
+                "product": "a bottle",
                 "formats": ["portrait"],
                 "locales": ["en"],
                 "reference_id": uploaded["reference_id"],
@@ -261,7 +261,7 @@ async def test_inspiration_is_the_default_mode(client: AsyncClient) -> None:
         await client.post(
             "/api/campaigns",
             json={
-                "brief": "a bottle",
+                "product": "a bottle",
                 "locales": ["en"],
                 "reference_id": uploaded["reference_id"],
             },
@@ -275,7 +275,7 @@ async def test_a_missing_reference_fails_the_job_cleanly(client: AsyncClient) ->
         await client.post(
             "/api/campaigns",
             json={
-                "brief": "a bottle",
+                "product": "a bottle",
                 "locales": ["en"],
                 "reference_id": "doesnotexist",
             },

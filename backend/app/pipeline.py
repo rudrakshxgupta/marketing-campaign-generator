@@ -283,6 +283,51 @@ class CampaignPipeline:
         )
         return result
 
+    async def recompose(
+        self,
+        result: CampaignResult,
+        *,
+        locale_key: str,
+        brand: BrandKit,
+        logo: Image.Image | None = None,
+    ) -> list[Variant]:
+        """Re-render one locale from the base image already on disk.
+
+        Costs **no image quota**. The base is text-free by design, so changing
+        copy is a typesetting job rather than a regeneration -- which is what
+        makes human review practical at all. If every correction cost a
+        rate-limited call, nobody would correct anything.
+        """
+        if result.copy_pack is None:
+            raise ValueError("campaign has no copy to recompose")
+
+        out_dir = self._storage / "renders" / result.campaign_id
+        replaced: list[Variant] = []
+
+        for format_key, base_path in result.base_paths.items():
+            with Image.open(base_path) as stored:
+                base = stored.convert("RGB")
+            variant = await self._compose_variant(
+                base=base,
+                logo=logo,
+                copy_pack=result.copy_pack,
+                locale_key=locale_key,
+                format_key=format_key,
+                out_dir=out_dir,
+                brand=brand,
+            )
+            replaced.append(variant)
+
+        # Swap the new variants in for the old ones.
+        result.variants = [
+            v for v in result.variants if v.locale != locale_key
+        ] + replaced
+        logger.info(
+            "recomposed %s for %s (%d format(s), no image call)",
+            locale_key, result.campaign_id, len(replaced),
+        )
+        return replaced
+
     async def _generate_base(
         self,
         prompt: str,

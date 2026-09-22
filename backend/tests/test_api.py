@@ -58,7 +58,7 @@ async def test_generation_produces_many_variants_from_one_image_call(
     response = await client.post(
         "/api/campaigns",
         json={
-            "brief": "a glass bottle of coconut oil on dark wood, warm festive light",
+            "product": "a glass bottle of coconut oil on dark wood, warm festive light",
             "formats": ["portrait"],
             "locales": ["en", "hi", "hi-Latn", "ta"],
             "occasion": "Diwali",
@@ -85,7 +85,7 @@ async def test_prompt_forbids_text_and_reserves_space(client: AsyncClient) -> No
     created = (
         await client.post(
             "/api/campaigns",
-            json={"brief": "a bottle on wood", "formats": ["square"], "locales": ["en"]},
+            json={"product": "a bottle on wood", "formats": ["square"], "locales": ["en"]},
         )
     ).json()
     job = await _await_job(client, created["job_id"])
@@ -104,7 +104,7 @@ async def test_machine_written_copy_is_flagged_for_review(client: AsyncClient) -
     created = (
         await client.post(
             "/api/campaigns",
-            json={"brief": "a bottle", "formats": ["portrait"], "locales": ["ta"]},
+            json={"product": "a bottle", "formats": ["portrait"], "locales": ["ta"]},
         )
     ).json()
     job = await _await_job(client, created["job_id"])
@@ -123,7 +123,7 @@ async def test_bundle_contains_images_and_copy(client: AsyncClient) -> None:
     created = (
         await client.post(
             "/api/campaigns",
-            json={"brief": "a bottle", "formats": ["portrait"], "locales": ["en", "hi"]},
+            json={"product": "a bottle", "formats": ["portrait"], "locales": ["en", "hi"]},
         )
     ).json()
     job = await _await_job(client, created["job_id"])
@@ -145,14 +145,14 @@ async def test_bundle_contains_images_and_copy(client: AsyncClient) -> None:
 
 async def test_unknown_format_is_rejected(client: AsyncClient) -> None:
     response = await client.post(
-        "/api/campaigns", json={"brief": "x", "formats": ["billboard"]}
+        "/api/campaigns", json={"product": "x", "formats": ["billboard"]}
     )
     assert response.status_code == 400
 
 
 async def test_unknown_locale_is_rejected(client: AsyncClient) -> None:
     response = await client.post(
-        "/api/campaigns", json={"brief": "x", "locales": ["fr"]}
+        "/api/campaigns", json={"product": "x", "locales": ["fr"]}
     )
     assert response.status_code == 400
 

@@ -240,7 +240,7 @@ async def test_a_real_estate_edit_preserves_the_building(client: AsyncClient) ->
         await client.post(
             "/api/campaigns",
             json={
-                "brief": "our 3 BHK apartment project in Pune",
+                "product": "our 3 BHK apartment project in Pune",
                 "formats": ["portrait"],
                 "locales": ["en"],
                 "reference_id": uploaded["reference_id"],
@@ -272,7 +272,7 @@ async def test_an_explicit_subject_kind_overrides_the_guess(client: AsyncClient)
         await client.post(
             "/api/campaigns",
             json={
-                "brief": "a sunset over mountains",  # would infer "generic"
+                "product": "a sunset over mountains",  # would infer "generic"
                 "locales": ["en"],
                 "reference_id": uploaded["reference_id"],
                 "reference_mode": "edit",
@@ -310,7 +310,7 @@ async def test_a_failed_fidelity_check_reaches_the_review_queue(
         await client.post(
             "/api/campaigns",
             json={
-                "brief": "our villa project",
+                "product": "our villa project",
                 "locales": ["en"],
                 "reference_id": uploaded["reference_id"],
                 "reference_mode": "edit",
@@ -335,7 +335,7 @@ async def test_the_text_path_has_no_fidelity_report(client: AsyncClient) -> None
     created = (
         await client.post(
             "/api/campaigns",
-            json={"brief": "a glass bottle", "locales": ["en"]},
+            json={"product": "a glass bottle", "locales": ["en"]},
         )
     ).json()
     job = await _await_job(client, created["job_id"])

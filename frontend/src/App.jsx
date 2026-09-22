@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import PhoneFrame from "./PhoneFrame";
+import ReviewPanel from "./ReviewPanel";
 
 /**
  * Campaign generator UI.
@@ -28,13 +29,10 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [usage, setUsage] = useState(null);
 
-  const [brief, setBrief] = useState(
-    "a clear glass bottle of cold-pressed coconut oil on dark walnut, warm festive bokeh behind"
-  );
-  const [proposition, setProposition] = useState("Purity you can taste");
-  const [benefit, setBenefit] = useState("Cold-pressed, nothing added");
+  const [product, setProduct] = useState("cold-pressed coconut oil, 500ml glass bottle");
+  const [factsText, setFactsText] = useState("");
   const [brandName, setBrandName] = useState("ACME");
-  const [occasion, setOccasion] = useState("Diwali");
+  const [occasion, setOccasion] = useState("");
   const [formats, setFormats] = useState(["portrait"]);
   const [locales, setLocales] = useState(["en", "hi", "hi-Latn", "ta"]);
   const [economy, setEconomy] = useState(false);
@@ -99,12 +97,15 @@ export default function App() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          brief, proposition, benefit,
+          product,
           brand_name: brandName,
+          // Blank means "you decide" -- the compiler picks an occasion that
+          // suits the product and season, including per-region festivals.
           occasion,
-          // The right festival differs by region: a Bengali audience's gifting
-          // peak is Durga Puja, not Diwali.
-          occasion_by_locale: occasion === "Diwali" ? { bn: "Durga Puja" } : {},
+          // The only claims the copy may make. Anything not listed here is
+          // never invented.
+          facts: factsText.split("
+").map((f) => f.trim()).filter(Boolean),
           formats, locales, economy,
           reference_id: referenceId,
           reference_mode: referenceMode,
@@ -134,6 +135,13 @@ export default function App() {
     tick();
   }
 
+  async function refreshJob() {
+    if (!job?.job_id) return;
+    const data = await fetch(`/api/jobs/${job.job_id}`).then((r) => r.json());
+    // Bust the browser cache: the file name is unchanged but the pixels are not.
+    setJob({ ...data, _v: Date.now() });
+  }
+
   const variantsByLocale = {};
   (job?.variants || []).forEach((v) => {
     (variantsByLocale[v.locale] ||= []).push(v);
@@ -154,35 +162,35 @@ export default function App() {
           One text-free image, every language composited on top.
         </p>
 
-        <h2>The picture</h2>
-        <textarea value={brief} onChange={(e) => setBrief(e.target.value)} />
+        <h2>What do you sell?</h2>
+        <textarea value={product} onChange={(e) => setProduct(e.target.value)}
+                  placeholder="e.g. handmade silver jhumka earrings" />
         <div className="hint">
-          Describe what the <b>photo</b> shows — not the caption. Text is never
-          drawn by the model; it is typeset on top afterwards.
+          That is the only thing you have to write. The AI works out the
+          photograph, the message, the occasion and the copy in every language.
         </div>
 
-        <h2>The message</h2>
-        <label>Proposition</label>
-        <input type="text" value={proposition} onChange={(e) => setProposition(e.target.value)} />
-        <label>Benefit</label>
-        <input type="text" value={benefit} onChange={(e) => setBenefit(e.target.value)} />
-        <div className="row">
+        <div className="row" style={{ marginTop: 12 }}>
           <div>
-            <label>Brand</label>
+            <label>Brand name</label>
             <input type="text" value={brandName} onChange={(e) => setBrandName(e.target.value)} />
           </div>
           <div>
-            <label>Occasion</label>
-            <input type="text" value={occasion} onChange={(e) => setOccasion(e.target.value)} />
+            <label>Occasion <span style={{ opacity: 0.6 }}>(optional)</span></label>
+            <input type="text" value={occasion} placeholder="AI decides"
+                   onChange={(e) => setOccasion(e.target.value)} />
           </div>
         </div>
-        {occasion === "Diwali" && locales.includes("bn") && (
-          <div className="note">
-            Bengali copy will be written to <b>Durga Puja</b>, not Diwali — that
-            is the gifting peak for that audience. The referent changes, not
-            just the words.
-          </div>
-        )}
+
+        <label style={{ marginTop: 12 }}>Offers &amp; facts <span style={{ opacity: 0.6 }}>(one per line, optional)</span></label>
+        <textarea value={factsText} onChange={(e) => setFactsText(e.target.value)}
+                  placeholder={"30% off
+free delivery over 999"} style={{ minHeight: 52 }} />
+        <div className="hint">
+          The <b>only</b> claims the copy may make. Anything not listed here is
+          never invented — a model that helpfully adds "50% off" has written a
+          false advertisement.
+        </div>
 
         <h2>Brand logo</h2>
         <input type="file" accept="image/*"
@@ -314,6 +322,34 @@ export default function App() {
         {job && (
           <>
             <div className="bar"><i style={{ width: `${job.progress || 0}%` }} /></div>
+            {job.brief_summary && (
+              <div className="brief-card">
+                <div className="brief-head">What the AI decided</div>
+                <b>Category</b> {job.brief_summary.category}
+                <b>Photograph</b> {job.brief_summary.subject}
+                <b>Message</b> {job.brief_summary.proposition}
+                {job.brief_summary.occasion && (
+                  <><b>Occasion</b> {job.brief_summary.occasion}</>
+                )}
+                {Object.keys(job.brief_summary.occasion_by_locale || {}).length > 0 && (
+                  <>
+                    <b>Per region</b>
+                    <span>
+                      {Object.entries(job.brief_summary.occasion_by_locale)
+                        .map(([l, o]) => `${l}: ${o}`).join(" · ")}
+                    </span>
+                  </>
+                )}
+                <b>Reserved for text</b> {job.brief_summary.reserved_space}
+              </div>
+            )}
+            {job.review_count > 0 && (
+              <div className="note">
+                <b>{job.review_count}</b> locale{job.review_count === 1 ? "" : "s"} awaiting
+                review. Approving re-renders from the image already generated — no
+                image cost.
+              </div>
+            )}
             <div className="log">
               state: {job.state}
               {job.image_calls != null && `\nimage calls: ${job.image_calls}`}
@@ -346,7 +382,7 @@ export default function App() {
                       </span>
                     </div>
                     <PhoneFrame
-                      src={`/api/jobs/${job.job_id}/image/${v.file}`}
+                      src={`/api/jobs/${job.job_id}/image/${v.file}${job._v ? `?v=${job._v}` : ""}`}
                       format={v.format}
                       showSafe={showSafe}
                     />
@@ -356,11 +392,23 @@ export default function App() {
                         <div className="tags">{(copy.hashtags || []).join(" ")}</div>
                       </div>
                     )}
-                    {v.needs_review && (
-                      <div className="review">
-                        {v.review_reasons.join(" · ")}
-                      </div>
+                    {copy && (
+                      <ReviewPanel
+                        jobId={job.job_id}
+                        locale={locale}
+                        copy={copy}
+                        onReviewed={refreshJob}
+                      />
                     )}
+                    {v.needs_review &&
+                      v.review_reasons.filter((r) => !r.includes("not been reviewed"))
+                        .length > 0 && (
+                        <div className="review">
+                          {v.review_reasons
+                            .filter((r) => !r.includes("not been reviewed"))
+                            .join(" · ")}
+                        </div>
+                      )}
                   </div>
                 );
               })

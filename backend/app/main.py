@@ -23,7 +23,8 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
-from app.copy.languages import DEFAULT_LOCALES, LOCALES
+from app.copy.languages import DEFAULT_LOCALES, LOCALES, get_locale
+from app.copy.brief_compiler import compile_brief, fallback_brief
 from app.copy.fidelity import SubjectKind, detect_kind
 from app.copy.strategy import BrandKit, CreativeBrief, CreativeStrategy, NegativeSpace
 from app.foundry.budget import BudgetExceeded
@@ -39,7 +40,7 @@ from app.pipeline import CampaignPipeline, CampaignResult, export_bundle
 logger = logging.getLogger(__name__)
 
 JobState = Literal[
-    "queued", "generating", "compositing", "complete",
+    "queued", "compiling", "generating", "compositing", "complete",
     "failed", "rate_limited", "budget_exceeded",
 ]
 
@@ -53,6 +54,13 @@ class Job:
     result: CampaignResult | None = None
     bundle: Path | None = None
     logs: list[str] = field(default_factory=list)
+    #: Kept so a review edit can re-render with the same brand and logo it was
+    #: built with, rather than defaults that would quietly change the design.
+    brand: BrandKit | None = None
+    logo_path: Path | None = None
+    #: What the compiler turned the product name into, so the user can see and
+    #: override it rather than wondering where the picture came from.
+    brief_summary: dict | None = None
 
 
 JOBS: dict[str, Job] = {}
@@ -85,17 +93,28 @@ async def _drain(timeout: float = 30.0) -> None:
 
 
 class GenerateRequest(BaseModel):
-    brief: str = Field(..., description="What the picture should show")
-    proposition: str = "Purity you can taste"
-    benefit: str = "Cold-pressed, nothing added"
+    #: The only thing the user has to supply: what they sell.
+    #:
+    #: Everything else -- what the photograph shows, the proposition, the
+    #: benefit, the occasion -- is compiled from this by the model. Asking a
+    #: marketer to write an image prompt is asking them to do the part they
+    #: are worst at.
+    product: str = Field(..., description="What you sell, in plain words")
+
     brand_name: str = "ACME"
-    occasion: str = ""
     mandatory_line: str = ""
+
+    #: The ONLY claims the copy may state. Nothing outside this list is ever
+    #: invented -- a model that helpfully adds "50% off" has written a false
+    #: advertisement.
+    facts: list[str] = Field(default_factory=list)
+
+    #: Optional overrides. Left empty, the model decides.
+    occasion: str = ""
     formats: list[str] = Field(default_factory=lambda: ["portrait"])
     locales: list[str] = Field(default_factory=lambda: list(DEFAULT_LOCALES))
-    facts: list[str] = Field(default_factory=list)
-    #: Per-locale occasion overrides. The right festival differs by region --
-    #: a Bengali audience's gifting peak is Durga Puja, not Diwali.
+    #: Per-locale occasion overrides. Usually left empty -- the compiler sets
+    #: these, because the right festival differs by region and it knows that.
     occasion_by_locale: dict[str, str] = Field(default_factory=dict)
     #: Generate one tall master and crop every other format out of it, turning
     #: N generations into one. Costs some sharpness and composition control,
@@ -357,6 +376,7 @@ async def get_job(job_id: str) -> dict:
             for v in job.result.variants
         ]
         payload["review_count"] = len(job.result.review_queue)
+        payload["brief_summary"] = job.brief_summary
         if job.result.copy_pack is not None:
             payload["copy"] = {
                 key: {
@@ -368,12 +388,94 @@ async def get_job(job_id: str) -> dict:
                     "alt_text": c.alt_text,
                     "back_translation": c.back_translation,
                     "needs_review": c.needs_review,
+                    "label": get_locale(key).label,
+                    "bcp47": get_locale(key).bcp47,
                 }
                 for key, c in job.result.copy_pack.by_locale.items()
             }
     if job.bundle is not None:
         payload["bundle"] = f"/api/jobs/{job.id}/bundle"
     return payload
+
+
+class ReviewRequest(BaseModel):
+    """A human correcting or approving one locale's copy."""
+
+    headline: str | None = None
+    subhead: str | None = None
+    cta: str | None = None
+    caption: str | None = None
+    hashtags: list[str] | None = None
+    #: Approving clears the review flag. Approved copy is never regenerated.
+    approve: bool = True
+
+
+@app.patch("/api/jobs/{job_id}/copy/{locale}")
+async def review_copy(job_id: str, locale: str, request: ReviewRequest) -> dict:
+    """Edit and/or approve one locale, then re-render it.
+
+    Costs **no image quota**: the base image is text-free, so corrected copy is
+    re-typeset onto the image already on disk. That is what makes review
+    practical -- if a fixed typo cost a rate-limited generation, nobody would
+    fix typos.
+
+    This matters most for Bengali, Tamil and Telugu, where Azure OCR cannot
+    verify rendered text at all. For those scripts a human approving what they
+    can read is the only check there is.
+    """
+    job = JOBS.get(job_id)
+    if job is None or job.result is None or job.result.copy_pack is None:
+        raise HTTPException(404, "no such campaign")
+    if locale not in job.result.copy_pack.by_locale:
+        raise HTTPException(404, f"campaign has no copy for {locale!r}")
+
+    copy = job.result.copy_pack.by_locale[locale]
+    for field_name in ("headline", "subhead", "cta", "caption"):
+        value = getattr(request, field_name)
+        if value is not None:
+            setattr(copy, field_name, value)
+    if request.hashtags is not None:
+        copy.hashtags = tuple(request.hashtags)
+    copy.needs_review = not request.approve
+
+    settings = get_settings()
+    logo = None
+    if job.logo_path and Path(job.logo_path).is_file():
+        logo = Image.open(job.logo_path).convert("RGBA")
+
+    pipeline = CampaignPipeline(
+        app.state.images,
+        renderer=app.state.renderer,
+        writer=app.state.writer,
+        storage=settings.storage_root,
+        capabilities=settings.capabilities,
+    )
+    try:
+        await pipeline.recompose(
+            job.result,
+            locale_key=locale,
+            brand=job.brand or BrandKit(name="ACME"),
+            logo=logo,
+        )
+    finally:
+        await pipeline.aclose()
+
+    # The bundle is now stale, so rebuild it with the approved copy.
+    job.bundle = export_bundle(
+        job.result, settings.storage_root / "exports" / f"{job.id}.zip"
+    )
+    job.logs.append(
+        f"{locale} {'approved' if request.approve else 'edited'} and re-rendered "
+        f"(no image call)"
+    )
+
+    return {
+        "locale": locale,
+        "approved": request.approve,
+        "needs_review": copy.needs_review,
+        "image_calls_used": 0,
+        "review_count": len(job.result.review_queue),
+    }
 
 
 @app.get("/api/jobs/{job_id}/image/{filename}")
@@ -478,40 +580,13 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
         capabilities=settings.capabilities,
     )
     try:
-        job.state = "generating"
-        job.logs.append(
-            f"one generation per format ({len(request.formats)}), "
-            f"{len(request.locales)} locales composited from each"
-        )
-
-        # Inferred from the user's own words when not set explicitly. The
-        # inference is a convenience for the UI, never the only thing standing
-        # between a model and a misrepresented building -- an explicit
-        # subject_kind always wins.
-        subject_kind = request.subject_kind or detect_kind(request.brief)
-        brief = CreativeBrief(
-            subject=request.brief,
-            negative_space=NegativeSpace(region="bottom_left", coverage_pct=32),
-            subject_kind=subject_kind,
-            preserve_subject=request.preserve_subject,
-        )
-        if request.reference_id and request.reference_mode == "edit":
-            job.logs.append(
-                f"preserving the {subject_kind.value} subject"
-                if request.preserve_subject
-                else "subject preservation OFF - the subject may be redesigned"
-            )
-        strategy = CreativeStrategy(
-            proposition=request.proposition,
-            benefit=request.benefit,
-            occasion=request.occasion,
-            occasion_by_locale=request.occasion_by_locale,
-            facts=tuple(request.facts),
-        )
         brand = BrandKit(name=request.brand_name, mandatory_line=request.mandatory_line)
 
-        # Reference image, if one was uploaded.
+        # 1. The reference image, if any. Read first, because its measured look
+        #    feeds the compiler -- the brief is written *around* the reference
+        #    rather than patched afterwards.
         reference_bytes: bytes | None = None
+        style_hint: dict | None = None
         if request.reference_id:
             ref_path = (
                 settings.storage_root / "uploads" / f"ref_{request.reference_id}.png"
@@ -520,22 +595,84 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
                 raise FileNotFoundError(f"reference {request.reference_id} not found")
 
             if request.reference_mode == "inspiration":
-                # Measure the look and fold it into the brief, then run the
-                # ordinary text path. The output then obeys our layout, aspect
-                # ratio and safe zones, which edit mode cannot guarantee.
                 with Image.open(ref_path) as reference:
-                    brief = apply_style(brief, extract_style(reference))
-                job.logs.append(
-                    f"reference used as inspiration: {', '.join(brief.palette_names)}"
-                )
+                    profile = extract_style(reference)
+                style_hint = {
+                    "palette": list(profile.palette_names),
+                    "brightness": profile.brightness,
+                    "contrast": profile.contrast,
+                    "temperature": profile.temperature,
+                    "lighting": profile.describe_lighting(),
+                    "mood": list(profile.describe_mood()),
+                }
+                job.logs.append(f"reference look: {', '.join(profile.palette_names)}")
             else:
                 reference_bytes = ref_path.read_bytes()
                 job.logs.append("reference edited directly; rights confirmed by user")
+
+        # 2. Compile the brief. The user gave a product name; this turns it
+        #    into a photograph, a proposition and an occasion.
+        job.state = "compiling"
+        job.logs.append(f"compiling a brief from: {request.product!r}")
+
+        if app.state.text is not None:
+            compiled = await compile_brief(
+                app.state.text,
+                product=request.product,
+                brand=brand,
+                facts=tuple(request.facts),
+                style_hint=style_hint,
+            )
+        else:
+            # No text model reachable. Degrade rather than fail: the pipeline
+            # still needs a reserved region and a subject kind, and neither
+            # requires a model.
+            compiled = fallback_brief(
+                request.product, brand, tuple(request.facts), style_hint
+            )
+            job.logs.append("no text model - using a fallback brief")
+
+        brief, strategy = compiled.brief, compiled.strategy
+        job.brief_summary = compiled.summary
+
+        # An explicit subject_kind always wins over the compiler's guess -- the
+        # inference is a convenience, never the only thing standing between a
+        # model and a misrepresented building.
+        if request.subject_kind:
+            brief.subject_kind = request.subject_kind
+        brief.preserve_subject = request.preserve_subject
+
+        if request.occasion:
+            strategy.occasion = request.occasion
+        if request.occasion_by_locale:
+            strategy.occasion_by_locale.update(request.occasion_by_locale)
+
+        job.logs.append(f"subject: {brief.subject[:90]}")
+        job.logs.append(
+            f"occasion: {strategy.occasion or '(none)'}"
+            + (
+                f"  overrides: {strategy.occasion_by_locale}"
+                if strategy.occasion_by_locale
+                else ""
+            )
+        )
+        if request.reference_id and request.reference_mode == "edit":
+            job.logs.append(
+                f"preserving the {brief.subject_kind.value} subject"
+                if request.preserve_subject
+                else "subject preservation OFF - the subject may be redesigned"
+            )
 
         logo_path = next(
             iter(sorted((settings.storage_root / "uploads").glob("logo_*.png"))), None
         )
         logo = Image.open(logo_path).convert("RGBA") if logo_path else None
+
+        job.state = "generating"
+        job.logs.append(
+            f"one generation per format ({len(request.formats)}), "
+            f"{len(request.locales)} locales composited from each"
+        )
 
         job.state = "compositing"
         job.progress = 40
@@ -559,6 +696,8 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
                 variant.needs_review = True
                 variant.review_reasons = variant.review_reasons + (reason,)
 
+        job.brand = brand
+        job.logo_path = logo_path
         job.result = result
         job.bundle = export_bundle(
             result, settings.storage_root / "exports" / f"{job.id}.zip"
