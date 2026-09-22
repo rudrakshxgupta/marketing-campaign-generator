@@ -43,6 +43,16 @@ class Settings:
             "MAI_DRAFT_DEPLOYMENT", "mai-image-26-flash"
         )
     )
+    #: Chat deployment for copy and transcreation. A separate deployment from
+    #: the image models, with its own quota -- text is measured in hundreds of
+    #: thousands of tokens, images in requests per minute, and a burst of copy
+    #: must never starve an image render.
+    text_deployment: str = field(
+        default_factory=lambda: os.environ.get("MAI_TEXT_DEPLOYMENT", "gpt-5-mini")
+    )
+    text_api_version: str = field(
+        default_factory=lambda: os.environ.get("MAI_TEXT_API_VERSION", "2024-12-01-preview")
+    )
 
     # --- Rate limiting -----------------------------------------------------
     #: MAI Global Standard allows 2-12 RPM by tier. Default to the safest.

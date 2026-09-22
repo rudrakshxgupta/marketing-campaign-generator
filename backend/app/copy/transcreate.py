@@ -255,3 +255,117 @@ def _hashtags(strategy: CreativeStrategy, locale: Locale) -> tuple[str, ...]:
     if strategy.occasion_for(locale.key):
         base.append("#" + strategy.occasion_for(locale.key).lower().replace(" ", ""))
     return tuple(base)
+
+
+# --------------------------------------------------------------------------
+# Live writer
+# --------------------------------------------------------------------------
+
+def copypack_schema(locales: tuple[str, ...]) -> dict:
+    """JSON schema constraining the model to exactly the locales we asked for.
+
+    Structured output rather than "please return JSON". A model that returns
+    *almost* valid JSON is worse than one that fails loudly, because the
+    pipeline downstream would render garbage into a brand asset.
+    """
+    per_locale = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "headline", "headline_alternates", "subhead", "cta",
+            "caption", "hashtags", "alt_text", "back_translation",
+        ],
+        "properties": {
+            "headline": {"type": "string"},
+            # Shorter variants, so the typesetter can *select* a line that fits
+            # rather than shrink type below the legible minimum for the script.
+            "headline_alternates": {
+                "type": "array", "items": {"type": "string"},
+                "minItems": 2, "maxItems": 2,
+            },
+            "subhead": {"type": "string"},
+            "cta": {"type": "string"},
+            "caption": {"type": "string"},
+            "hashtags": {
+                "type": "array", "items": {"type": "string"},
+                "minItems": 3, "maxItems": 20,
+            },
+            "alt_text": {"type": "string"},
+            # The only practical safety net for the scripts where Azure OCR
+            # cannot verify anything: a reviewer who does not read Tamil can
+            # still check the meaning.
+            "back_translation": {"type": "string"},
+        },
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(locales),
+        "properties": {key: per_locale for key in locales},
+    }
+
+
+class FoundryCopyWriter:
+    """Transcreation via a Foundry chat deployment.
+
+    One call produces every locale, because writing them together keeps the
+    campaign coherent -- and because a single call is cheaper and faster than N.
+    """
+
+    def __init__(self, client, *, disclosure: bool = True) -> None:
+        self._client = client
+        self._disclosure = disclosure
+
+    async def write(
+        self,
+        strategy: CreativeStrategy,
+        brand: BrandKit,
+        locales: tuple[str, ...],
+    ) -> CopyPack:
+        payload = await self._client.complete_json(
+            system=(
+                "You are a senior Indian advertising copywriter. You return "
+                "only JSON matching the provided schema. You transcreate: you "
+                "never translate word for word."
+            ),
+            user=build_prompt(strategy, brand, locales),
+            schema=copypack_schema(locales),
+            schema_name="copy_pack",
+        )
+
+        pack = CopyPack(strategy=strategy)
+        for key in locales:
+            entry = payload.get(key)
+            if not entry:
+                raise ValueError(f"model returned no copy for locale {key!r}")
+
+            caption = str(entry.get("caption", "")).strip()
+            # Platforms strip metadata on upload, so the caption is the only
+            # AI-disclosure channel that reliably reaches a viewer. Appended
+            # here rather than asked of the model, so it cannot be forgotten.
+            if self._disclosure:
+                line = _AI_DISCLOSURE.get(key, _AI_DISCLOSURE["en"])
+                if line not in caption:
+                    caption = f"{caption}\n\n{line}".strip()
+            if brand.mandatory_line and brand.mandatory_line not in caption:
+                caption = f"{caption}\n\n{brand.mandatory_line}".strip()
+
+            pack.by_locale[key] = LocaleCopy(
+                locale=key,
+                headline=str(entry["headline"]).strip(),
+                headline_alternates=tuple(
+                    str(a).strip() for a in entry.get("headline_alternates", ())
+                ),
+                subhead=str(entry.get("subhead", "")).strip(),
+                cta=str(entry.get("cta", "")).strip(),
+                caption=caption,
+                hashtags=tuple(str(h).strip() for h in entry.get("hashtags", ())),
+                alt_text=str(entry.get("alt_text", "")).strip(),
+                back_translation=str(entry.get("back_translation", "")).strip(),
+                # Machine-written copy is never "ready". For Bengali, Tamil and
+                # Telugu this flag is the only gate between a model and a
+                # published brand asset, because Azure OCR cannot verify those
+                # scripts at all.
+                needs_review=True,
+            )
+        return pack

@@ -29,7 +29,9 @@ from app.copy.strategy import BrandKit, CreativeBrief, CreativeStrategy, Negativ
 from app.foundry.budget import BudgetedImageBackend, BudgetExceeded
 from app.foundry.cache import CachingImageBackend
 from app.foundry.image_client import MaiImageClient, MaiRateLimited
+from app.copy.transcreate import FoundryCopyWriter, StubCopyWriter
 from app.foundry.mock_client import MockImageClient
+from app.foundry.text_client import FoundryTextClient
 from app.imaging.dimensions import FORMATS
 from app.imaging.overlay import OverlayRenderer
 from app.imaging.style import apply_style, extract_style
@@ -170,6 +172,19 @@ async def lifespan(app: FastAPI):
     app.state.renderer = OverlayRenderer()
     app.state.images, app.state.budget, app.state.cache = build_image_backend(settings)
 
+    # Copy is written by a live model whenever one is reachable, even while
+    # images are mocked. Text quota is separate from image quota and vastly
+    # cheaper, so there is no reason to fake copy just because images are
+    # unavailable.
+    if settings.foundry_endpoint:
+        app.state.text = FoundryTextClient(settings)
+        app.state.writer = FoundryCopyWriter(app.state.text)
+        logger.warning("copy: live model '%s'", settings.text_deployment)
+    else:
+        app.state.text = None
+        app.state.writer = StubCopyWriter()
+        logger.warning("copy: stub (no FOUNDRY_ENDPOINT)")
+
     if settings.mock:
         logger.warning(
             "MAI_MOCK is on: images are placeholders, no Foundry calls are made"
@@ -185,6 +200,8 @@ async def lifespan(app: FastAPI):
     # Wait for in-flight jobs before tearing down the resources they are using.
     await _drain()
     await app.state.renderer.aclose()
+    if getattr(app.state, "text", None) is not None:
+        await app.state.text.aclose()
     if hasattr(app.state.images, "aclose"):
         await app.state.images.aclose()
 
@@ -268,6 +285,7 @@ async def meta() -> dict:
                 "language": loc.language,
                 "script": loc.script,
                 "register": loc.register,
+                "bcp47": loc.bcp47,
             }
             for loc in LOCALES.values()
         ],
@@ -359,9 +377,38 @@ async def get_job(job_id: str) -> dict:
             for v in job.result.variants
         ]
         payload["review_count"] = len(job.result.review_queue)
+        if job.result.copy_pack is not None:
+            payload["copy"] = {
+                key: {
+                    "headline": c.headline,
+                    "subhead": c.subhead,
+                    "cta": c.cta,
+                    "caption": c.caption,
+                    "hashtags": list(c.hashtags),
+                    "alt_text": c.alt_text,
+                    "back_translation": c.back_translation,
+                    "needs_review": c.needs_review,
+                }
+                for key, c in job.result.copy_pack.by_locale.items()
+            }
     if job.bundle is not None:
         payload["bundle"] = f"/api/jobs/{job.id}/bundle"
     return payload
+
+
+@app.get("/api/jobs/{job_id}/image/{filename}")
+async def job_image(job_id: str, filename: str) -> FileResponse:
+    """Serve one rendered variant.
+
+    The filename is confined to this job's own render directory and resolved
+    before use, so a traversal attempt cannot reach outside it.
+    """
+    settings = get_settings()
+    directory = (settings.storage_root / "renders" / job_id).resolve()
+    path = (directory / filename).resolve()
+    if not str(path).startswith(str(directory)) or not path.is_file():
+        raise HTTPException(404, "no such image")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/api/jobs/{job_id}/bundle")
@@ -446,6 +493,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
     pipeline = CampaignPipeline(
         app.state.images,
         renderer=app.state.renderer,
+        writer=app.state.writer,
         storage=settings.storage_root,
     )
     try:
