@@ -34,7 +34,7 @@ from app.copy.transcreate import FoundryCopyWriter, StubCopyWriter
 from app.foundry.text_client import FoundryTextClient
 from app.imaging.dimensions import FORMATS
 from app.imaging.overlay import OverlayRenderer
-from app.imaging.style import apply_style, extract_style
+from app.imaging.style import apply_style, extract_style, merge_styles
 from app.pipeline import CampaignPipeline, CampaignResult, export_bundle
 
 logger = logging.getLogger(__name__)
@@ -141,9 +141,15 @@ class GenerateRequest(BaseModel):
     #: campaign gets a random one of them and nothing reports a problem.
     logo_id: str | None = None
 
-    # --- reference image ---------------------------------------------------
-    #: From POST /api/uploads/reference.
+    # --- reference images --------------------------------------------------
+    #: From POST /api/uploads/reference. Kept for single-reference callers.
     reference_id: str | None = None
+    #: Several references, used as a moodboard. One photograph pins a look
+    #: only by accident -- what a person means by "this kind of thing" is the
+    #: qualities several images share, and a set makes that explicit.
+    #:
+    #: In edit mode the first is the subject and the rest are context.
+    reference_ids: list[str] = Field(default_factory=list)
     #: "inspiration" matches the look and builds a fresh image around your
     #: subject. "edit" keeps the actual photo and changes what you describe.
     #:
@@ -156,6 +162,18 @@ class GenerateRequest(BaseModel):
     edit_instruction: str = ""
     #: Required for edit mode. The user asserting they may use this image.
     rights_confirmed: bool = False
+
+    @property
+    def all_reference_ids(self) -> list[str]:
+        """Every reference, in order, however it was supplied.
+
+        Callers that only know about the single field keep working, and
+        nothing downstream has to remember there are two ways to say this.
+        Deduplicated: the same image sent twice is a wasted slot, and in edit
+        mode it would weight that reference twice over.
+        """
+        ordered = ([self.reference_id] if self.reference_id else []) + self.reference_ids
+        return list(dict.fromkeys(i for i in ordered if i))
 
     # --- subject preservation ----------------------------------------------
     #: What is being photographed. Left unset it is inferred from the brief.
@@ -352,7 +370,7 @@ async def create_campaign(request: GenerateRequest) -> dict:
         raise HTTPException(400, f"unknown locales: {sorted(unknown_locales)}")
 
     if request.reference_mode == "edit":
-        if not request.reference_id:
+        if not request.all_reference_ids:
             raise HTTPException(400, "edit mode needs a reference_id")
         # Edit mode reproduces the uploaded image pixel-for-pixel, so the user
         # has to assert they may use it. This is not boilerplate.
@@ -378,7 +396,10 @@ async def create_campaign(request: GenerateRequest) -> dict:
         "image_calls_expected": expected_calls,
         "deliverables_expected": len(request.formats) * len(request.locales),
         "economy": request.economy,
-        "reference_mode": request.reference_mode if request.reference_id else None,
+        "reference_mode": (
+            request.reference_mode if request.all_reference_ids else None
+        ),
+        "references": len(request.all_reference_ids),
         "poll": f"/api/jobs/{job.id}",
     }
 
@@ -640,17 +661,28 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
         #    feeds the compiler -- the brief is written *around* the reference
         #    rather than patched afterwards.
         reference_bytes: bytes | None = None
+        extra_reference_bytes: list[bytes] = []
         style_hint: dict | None = None
-        if request.reference_id:
-            ref_path = (
-                settings.storage_root / "uploads" / f"ref_{request.reference_id}.png"
-            )
-            if not ref_path.is_file():
-                raise FileNotFoundError(f"reference {request.reference_id} not found")
+        ref_paths: list[Path] = []
+        for ref_id in request.all_reference_ids:
+            candidate = settings.storage_root / "uploads" / f"ref_{ref_id}.png"
+            if not candidate.is_file():
+                raise FileNotFoundError(f"reference {ref_id} not found")
+            ref_paths.append(candidate)
+
+        if ref_paths:
+            ref_path = ref_paths[0]
 
             if request.reference_mode == "inspiration":
-                with Image.open(ref_path) as reference:
-                    profile = extract_style(reference)
+                profiles = []
+                for path in ref_paths:
+                    with Image.open(path) as reference:
+                        profiles.append(extract_style(reference))
+                profile = merge_styles(profiles)
+                if len(profiles) > 1:
+                    job.logs.append(
+                        f"{len(profiles)} references merged into one look"
+                    )
                 style_hint = {
                     "palette": list(profile.palette_names),
                     "brightness": profile.brightness,
@@ -662,7 +694,20 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
                 job.logs.append(f"reference look: {', '.join(profile.palette_names)}")
             else:
                 reference_bytes = ref_path.read_bytes()
-                job.logs.append("reference edited directly; rights confirmed by user")
+                # The first upload is the subject; the rest are context the
+                # model may restage *around* it. Order matters here in a way
+                # it does not for inspiration, so it is stated in the log
+                # rather than left for someone to infer from the output.
+                extra_reference_bytes = [p.read_bytes() for p in ref_paths[1:]]
+                job.logs.append(
+                    "reference edited directly; rights confirmed by user"
+                    + (
+                        f" ({len(extra_reference_bytes)} further reference(s) "
+                        f"as context)"
+                        if extra_reference_bytes
+                        else ""
+                    )
+                )
 
         # 2. Compile the brief. The user gave a product name; this turns it
         #    into a photograph, a proposition and an occasion.
@@ -710,7 +755,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
                 else ""
             )
         )
-        if request.reference_id and request.reference_mode == "edit":
+        if request.all_reference_ids and request.reference_mode == "edit":
             job.logs.append(
                 f"preserving the {brief.subject_kind.value} subject"
                 if request.preserve_subject
@@ -754,6 +799,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
             locales=tuple(request.locales),
             economy=request.economy,
             reference=reference_bytes,
+            extra_references=tuple(extra_reference_bytes),
             edit_instruction=request.edit_instruction,
         )
 

@@ -18,6 +18,7 @@ a user uploaded is how you turn "inspired by" into a derivative work.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from PIL import Image
@@ -207,3 +208,51 @@ def apply_style(brief, profile: StyleProfile):
     brief.must_not_depict = tuple(brief.must_not_depict) + profile.do_not_copy
     brief.source_mode = "style_transfer"
     return brief
+
+
+def merge_styles(profiles: Sequence[StyleProfile]) -> StyleProfile:
+    """Combine several references into one style, the way a moodboard works.
+
+    Someone assembling a reference set is not saying "copy image three"; they
+    are describing a look by triangulation, and the shared qualities are the
+    signal. So each categorical field is decided by majority, with ties broken
+    towards the first reference -- people put the closest match first.
+
+    Colour is the exception and is unioned rather than voted on. A palette is
+    the one thing a set of references genuinely adds up to: three photographs
+    contributing one colour each describe a scheme that none of them contains
+    on its own. Capped, because a prompt listing nine colours describes
+    nothing.
+    """
+    if not profiles:
+        return StyleProfile()
+    if len(profiles) == 1:
+        return profiles[0]
+
+    def vote(field_name: str) -> str:
+        values = [getattr(p, field_name) for p in profiles]
+        # max() over the count is stable, so a tie keeps the earliest-seen
+        # value -- which is the first reference's, by construction.
+        return max(dict.fromkeys(values), key=values.count)
+
+    names: list[str] = []
+    hexes: list[str] = []
+    # Round-robin rather than concatenating, so every reference contributes
+    # before any of them contributes twice.
+    for index in range(max(len(p.palette_names) for p in profiles)):
+        for profile in profiles:
+            if index < len(profile.palette_names):
+                name = profile.palette_names[index]
+                if name not in names:
+                    names.append(name)
+                    hexes.append(profile.palette_hex[index])
+
+    return StyleProfile(
+        palette_names=tuple(names[:5]),
+        palette_hex=tuple(hexes[:5]),
+        brightness=vote("brightness"),
+        contrast=vote("contrast"),
+        saturation=vote("saturation"),
+        temperature=vote("temperature"),
+        orientation=vote("orientation"),
+    )

@@ -23,7 +23,7 @@ const LABELS = {
   feed: "Feed safe zone",
 };
 
-export default function PhoneFrame({ src, format, showSafe }) {
+export default function PhoneFrame({ src, format, showSafe, onOpen }) {
   const isStory = format === "story";
   const inset = isStory ? INSETS.story : INSETS.feed;
   const pct = (n) => `${(n * 100).toFixed(1)}%`;
@@ -31,7 +31,15 @@ export default function PhoneFrame({ src, format, showSafe }) {
   return (
     <div className="phone">
       <div className="screen">
-        {src ? (
+        {src && onOpen ? (
+          // A button rather than a click handler on the image: this is the
+          // only way to reach full size, and it has to be reachable from the
+          // keyboard like any other control.
+          <button type="button" className="zoom" onClick={onOpen}
+                  aria-label="View at full size">
+            <img src={src} alt="" />
+          </button>
+        ) : src ? (
           <img src={src} alt="" />
         ) : (
           <div style={{ aspectRatio: isStory ? "9/16" : "4/5", background: "#15171d" }} />

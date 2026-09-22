@@ -142,15 +142,20 @@ class CachingImageBackend:
         image: bytes,
         mime: str = "image/png",
         draft: bool = False,
+        #: Further reference images. The first image is the subject; these
+        #: are context. Ignored by backends that take a single input.
+        extras: tuple[bytes, ...] = (),
         bypass_cache: bool = False,
     ) -> ImageResult:
-        key = self._edit_key(prompt, image, draft)
+        # Extras are part of the request, so they are part of the key: the
+        # same prompt with a different context set is a different image.
+        key = self._edit_key(prompt, image + b"".join(extras), draft)
         cached = self._read(key, 0, 0)
         if cached is not None and not bypass_cache:
             return cached
 
         result = await self._inner.edit(
-            prompt=prompt, image=image, mime=mime, draft=draft
+            prompt=prompt, image=image, mime=mime, draft=draft, extras=extras
         )
         self._write(key, result.png)
         self.stats.misses += 1

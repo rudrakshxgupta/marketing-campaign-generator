@@ -42,7 +42,7 @@ from app.imaging.compose import (
 from app.imaging.dimensions import MAI, Capabilities, plan_for
 from app.imaging.fidelity import FidelityReport, compare
 from app.imaging.overlay import FitReport, OverlayRenderer, OverlayStyle, TextBox
-from app.imaging.safezones import SafeZoneViolation
+from app.imaging.safezones import FEED_INSETS, INSETS_BY_FORMAT, SafeZoneViolation
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,10 @@ class CampaignResult:
     fidelity: FidelityReport | None = None
     #: Which format was generated and cropped down from, in economy mode.
     master_format: str | None = None
+    #: The region the brief reserved for the copy. Stored because a review
+    #: re-render has no brief: without it, approving a correction would move
+    #: the text to a different corner than the creative it was approving.
+    text_region: str = "bottom_left"
     #: Things the run did that the operator should know about but that are not
     #: failures -- a prompt retried in a reduced form, most of all. Silently
     #: recovering is worse than not recovering: the creative that comes back is
@@ -100,8 +104,11 @@ def master_format_for(formats: tuple[str, ...]) -> str:
     return min(formats, key=lambda key: plan_for(key).target_aspect)
 
 
-#: Where the copy block sits, per format. Story keeps well clear of the Reels
-#: caption tray, which eats the bottom 35% of the canvas.
+#: Default size and position of the copy block, per format. Story keeps well
+#: clear of the Reels caption tray, which eats the bottom 35% of the canvas.
+#:
+#: Only a default: where the block actually lands comes from the brief. See
+#: :func:`text_box_for`.
 TEXT_BOXES: dict[str, TextBox] = {
     "portrait": TextBox(left=0.07, top=0.52, width=0.62, height=0.34),
     "grid": TextBox(left=0.07, top=0.50, width=0.62, height=0.32),
@@ -110,11 +117,95 @@ TEXT_BOXES: dict[str, TextBox] = {
     "landscape": TextBox(left=0.06, top=0.30, width=0.52, height=0.50),
 }
 
+
+def text_box_for(format_key: str, region: str = "bottom_left") -> TextBox:
+    """Put the copy where the brief actually reserved room for it.
+
+    The prompt tells the model to leave a named region clean and free of
+    detail, and names it per campaign -- a bottle shot wants the space beside
+    the bottle, a building wants the sky above it. The typesetter then ignored
+    that entirely and wrote in the same fixed spot for every campaign.
+
+    Two things went wrong at once. The copy landed on the busiest part of the
+    picture while the deliberately empty region sat unused, and every creative
+    came out with the text in the same place no matter what was photographed.
+
+    The format's tuned width and height are kept -- those encode how much copy
+    fits and how close the Reels tray is -- and only the position moves, inside
+    the safe rect so a corner request cannot push the block under Instagram's
+    own UI.
+    """
+    base = TEXT_BOXES.get(format_key, TEXT_BOXES["portrait"])
+    insets = INSETS_BY_FORMAT.get(format_key, FEED_INSETS)
+
+    # A margin inside the safe rect, so the block never sits flush against the
+    # boundary of the area the platform merely promises not to cover.
+    pad = 0.02
+    min_left, min_top = insets.left + pad, insets.top + pad
+    max_left = 1 - insets.right - pad - base.width
+    max_top = 1 - insets.bottom - pad - base.height
+
+    if max_left < min_left or max_top < min_top:
+        # The block does not fit the safe area at this size; the default is
+        # already the tuned compromise, so leave it be.
+        return base
+
+    # All eight region names decompose the same way, and the bare ones
+    # ("top", "left") simply leave the other axis centred.
+    vertical = "top" if region.startswith("top") else (
+        "bottom" if region.startswith("bottom") else "centre"
+    )
+    horizontal = "left" if region.endswith("left") else (
+        "right" if region.endswith("right") else "centre"
+    )
+
+    left = {
+        "left": min_left,
+        "right": max_left,
+        "centre": (min_left + max_left) / 2,
+    }[horizontal]
+    top = {
+        "top": min_top,
+        "bottom": max_top,
+        "centre": base.top,
+    }[vertical]
+
+    return TextBox(
+        left=min(max(left, min_left), max_left),
+        top=min(max(top, min_top), max_top),
+        width=base.width,
+        height=base.height,
+        # Copy pinned to the top of its box reads as a caption; pinned to the
+        # bottom it reads as a headline sitting on the image. Match the edge
+        # the block was sent to.
+        justify="flex-start" if top <= (min_top + max_top) / 2 else "flex-end",
+    )
+
 #: Story UI occupies the top, so the mark goes high-left where the safe rect
 #: still has room; feed formats read better with it bottom-right.
 LOGO_ANCHORS: dict[str, Anchor] = {
     "story": "top_left",
 }
+
+
+def logo_anchor_for(format_key: str, box: TextBox) -> Anchor:
+    """Keep the mark clear of the copy.
+
+    Once the copy block follows the brief rather than sitting in one fixed
+    corner, a fixed logo anchor is a collision waiting to happen: a brief that
+    reserves the lower-right puts the headline exactly where the mark goes.
+
+    Story is left alone. Its usable band is narrow enough that top-left is the
+    only placement that reliably clears both the caption tray and the copy.
+    """
+    if format_key in LOGO_ANCHORS:
+        return LOGO_ANCHORS[format_key]
+
+    # Diagonally opposite the copy, which is the placement that stays furthest
+    # from it whichever corner the copy was sent to.
+    vertical = "top" if box.top + box.height / 2 > 0.5 else "bottom"
+    horizontal = "right" if box.left + box.width / 2 < 0.5 else "left"
+    return f"{vertical}_{horizontal}"  # type: ignore[return-value]
 
 #: Above this mean luminance the backdrop is light, so the copy must be dark.
 _LIGHT_BACKDROP = 0.45
@@ -214,6 +305,9 @@ class CampaignPipeline:
         formats: tuple[str, ...] = ("portrait",),
         locales: tuple[str, ...] = DEFAULT_LOCALES,
         reference: bytes | None = None,
+        #: Further references, used as context in edit mode. The first image
+        #: is the subject; these describe what may surround it.
+        extra_references: tuple[bytes, ...] = (),
         reference_mime: str = "image/png",
         edit_instruction: str = "",
         economy: bool = False,
@@ -229,7 +323,8 @@ class CampaignPipeline:
         prompt = render_prompt(brief, crop_safe=crop_safe)
         self.last_prompt = prompt
         result = CampaignResult(
-            campaign_id=campaign_id, prompt=prompt, economy=economy
+            campaign_id=campaign_id, prompt=prompt, economy=economy,
+            text_region=brief.negative_space.region,
         )
 
         # 1. Copy first. It costs no image quota, so a failure here should not
@@ -248,7 +343,7 @@ class CampaignPipeline:
 
             master_png = await self._generate_base(
                 prompt, brief, master_plan, reference, reference_mime,
-                edit_instruction, crop_safe=crop_safe,
+                edit_instruction, crop_safe=crop_safe, extras=extra_references,
             )
             result.image_calls += 1
             master = finalize_base(master_png, master_plan)
@@ -271,7 +366,7 @@ class CampaignPipeline:
                 plan = plan_for(format_key, self._caps)
                 base_png = await self._generate_base(
                     prompt, brief, plan, reference, reference_mime,
-                    edit_instruction, crop_safe=crop_safe,
+                    edit_instruction, crop_safe=crop_safe, extras=extra_references,
                 )
                 result.image_calls += 1
                 bases[format_key] = finalize_base(base_png, plan)
@@ -292,6 +387,7 @@ class CampaignPipeline:
                     format_key=format_key,
                     out_dir=out_dir,
                     brand=brand,
+                    region=brief.negative_space.region,
                 )
                 result.variants.append(variant)
 
@@ -335,6 +431,7 @@ class CampaignPipeline:
                 format_key=format_key,
                 out_dir=out_dir,
                 brand=brand,
+                region=result.text_region,
             )
             replaced.append(variant)
 
@@ -358,6 +455,7 @@ class CampaignPipeline:
         edit_instruction: str,
         *,
         crop_safe: bool = False,
+        extras: tuple[bytes, ...] = (),
     ) -> bytes:
         if reference is not None:
             png, report = await self._generate_from_reference(
@@ -367,6 +465,7 @@ class CampaignPipeline:
                 plan,
                 subject_kind=brief.subject_kind,
                 preserve_subject=brief.preserve_subject,
+                extras=extras,
             )
             self._last_fidelity = report
             return png
@@ -408,6 +507,7 @@ class CampaignPipeline:
         *,
         subject_kind: SubjectKind = SubjectKind.GENERIC,
         preserve_subject: bool = True,
+        extras: tuple[bytes, ...] = (),
     ) -> tuple[bytes, FidelityReport | None]:
         """Image-to-image path.
 
@@ -429,6 +529,12 @@ class CampaignPipeline:
             ),
             image=to_png(prepared),
             mime="image/png",
+            # Cropped to the same frame as the subject, so the model is not
+            # also reconciling three different aspect ratios.
+            extras=tuple(
+                to_png(_cover_crop(load_png(raw), plan.gen_w, plan.gen_h))
+                for raw in extras
+            ),
         )
         with load_png(edited.png) as returned:
             adjusted = _cover_crop(returned.convert("RGB"), plan.gen_w, plan.gen_h)
@@ -448,12 +554,13 @@ class CampaignPipeline:
         format_key: str,
         out_dir: Path,
         brand: BrandKit,
+        region: str = "bottom_left",
     ) -> Variant:
         copy = copy_pack[locale_key]
         locale = get_locale(locale_key)
         reasons: list[str] = []
 
-        box = TEXT_BOXES.get(format_key, TEXT_BOXES["portrait"])
+        box = text_box_for(format_key, region)
         overlay_png, fit = await self._renderer.render(
             width=base.width,
             height=base.height,
@@ -471,7 +578,7 @@ class CampaignPipeline:
 
         logo_variant, logo_contrast = "none", 0.0
         if logo is not None:
-            anchor = LOGO_ANCHORS.get(format_key, "bottom_right")
+            anchor = logo_anchor_for(format_key, box)
             try:
                 composed, placement = composite_logo(
                     composed.convert("RGB"), logo, format_key=format_key, anchor=anchor

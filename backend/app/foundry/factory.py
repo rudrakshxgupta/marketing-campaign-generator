@@ -57,7 +57,9 @@ def build_image_backend(settings: Settings) -> Backend:
     if settings.mock:
         # Nothing to guard: placeholders are free and caching them saves
         # nothing worth the indirection.
-        return Backend(images=MockImageClient())
+        # Given the configured model's limits, not MAI's: otherwise mock mode
+        # cannot exercise the backend the product actually runs on.
+        return Backend(images=MockImageClient(caps=settings.capabilities))
 
     if settings.image_backend == "flux":
         base = FluxImageClient(settings)

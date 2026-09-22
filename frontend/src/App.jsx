@@ -66,7 +66,7 @@ const FORMAT_LABELS = {
 };
 
 /** A file picker that shows you what it accepted. */
-function Drop({ label, hint, file, onPick, onClear, accept = "image/*" }) {
+function Drop({ label, hint, file, onPick, onClear, accept = "image/*", multiple }) {
   const input = useRef(null);
   return (
     <div className={`drop ${file ? "filled" : ""}`}
@@ -79,17 +79,72 @@ function Drop({ label, hint, file, onPick, onClear, accept = "image/*" }) {
         <strong>{file ? file.name : label}</strong>
         <span>{file ? "Click to replace" : hint}</span>
       </button>
-      {file && (
+      {file && onClear && (
         <button type="button" className="drop-clear" onClick={onClear}
                 aria-label={`Remove ${label}`}>×</button>
       )}
-      <input ref={input} type="file" accept={accept} hidden
+      <input ref={input} type="file" accept={accept} hidden multiple={multiple}
              onChange={(e) => {
-               const picked = e.target.files?.[0];
-               if (picked) onPick(picked);
+               const picked = Array.from(e.target.files || []);
+               if (picked.length) onPick(multiple ? picked : picked[0]);
                // Reset so picking the same file twice still fires a change.
                e.target.value = "";
              }} />
+    </div>
+  );
+}
+
+/**
+ * A creative at full size.
+ *
+ * An Instagram post is judged at the size it is published, and the grid
+ * shows it at about a quarter of that. Typography that looked fine in a
+ * 300px card is where the defects actually are -- a matra sitting a pixel
+ * off, copy running into a shadow -- so getting to full size has to be one
+ * click, not a download.
+ */
+function Lightbox({ shots, index, onClose, onMove }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowRight") onMove(1);
+      if (e.key === "ArrowLeft") onMove(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    // The page behind must not scroll while a modal is over it.
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [onClose, onMove]);
+
+  const shot = shots[index];
+  if (!shot) return null;
+
+  return (
+    <div className="lightbox" role="dialog" aria-modal="true"
+         aria-label={`${shot.label}, full size`} onClick={onClose}>
+      <div className="lightbox-inner" onClick={(e) => e.stopPropagation()}>
+        <img src={shot.src} alt={shot.alt || ""} />
+        <div className="lightbox-bar">
+          <span className="who">{shot.label}</span>
+          <span className="what">{shot.detail}</span>
+          <span className="spacer" />
+          {shots.length > 1 && (
+            <>
+              <button type="button" className="ghost" onClick={() => onMove(-1)}
+                      aria-label="Previous">←</button>
+              <span className="what">{index + 1} of {shots.length}</span>
+              <button type="button" className="ghost" onClick={() => onMove(1)}
+                      aria-label="Next">→</button>
+            </>
+          )}
+          <a className="ghost" href={shot.src} download>Save</a>
+          <button type="button" className="ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -109,9 +164,9 @@ export default function App() {
   const [showSafe, setShowSafe] = useState(true);
 
   const [logoFile, setLogoFile] = useState(null);
-  const [referenceFile, setReferenceFile] = useState(null);
-  const [referenceId, setReferenceId] = useState(null);
-  const [referenceStyle, setReferenceStyle] = useState(null);
+  // A list, because a look is described by triangulation: what a person
+  // means by "this kind of thing" is what several images have in common.
+  const [references, setReferences] = useState([]);
   const [referenceMode, setReferenceMode] = useState("inspiration");
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [subject, setSubject] = useState(null);
@@ -119,6 +174,7 @@ export default function App() {
   const [job, setJob] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [zoomed, setZoomed] = useState(null);
 
   useEffect(() => {
     fetch("/api/meta").then((r) => r.json()).then(setMeta).catch(() => {});
@@ -157,23 +213,38 @@ export default function App() {
       prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
     );
 
-  async function uploadReference(file) {
-    const body = new FormData();
-    body.append("file", file);
-    const response = await fetch("/api/uploads/reference", { method: "POST", body });
-    if (!response.ok) return setError("Could not read that image.");
-    const data = await response.json();
-    setReferenceId(data.reference_id);
-    setReferenceStyle(data.style);
-    setReferenceFile({ name: file.name, url: URL.createObjectURL(file) });
+  async function uploadReferences(files) {
+    setError(null);
+    for (const file of files) {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch("/api/uploads/reference", { method: "POST", body });
+      if (!response.ok) {
+        setError(`Could not read ${file.name}.`);
+        continue;
+      }
+      const data = await response.json();
+      setReferences((prev) => [
+        ...prev,
+        {
+          id: data.reference_id,
+          style: data.style,
+          name: file.name,
+          url: URL.createObjectURL(file),
+        },
+      ]);
+    }
   }
 
-  function clearReference() {
-    setReferenceId(null);
-    setReferenceStyle(null);
-    setReferenceFile(null);
-    setReferenceMode("inspiration");
-    setRightsConfirmed(false);
+  function removeReference(id) {
+    setReferences((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      if (!next.length) {
+        setReferenceMode("inspiration");
+        setRightsConfirmed(false);
+      }
+      return next;
+    });
   }
 
   async function uploadLogo(file) {
@@ -206,7 +277,7 @@ export default function App() {
           facts: factsText.split(/\r?\n/).map((f) => f.trim()).filter(Boolean),
           formats, locales, economy,
           logo_id: logoFile?.id || null,
-          reference_id: referenceId,
+          reference_ids: references.map((r) => r.id),
           reference_mode: referenceMode,
           rights_confirmed: rightsConfirmed,
         }),
@@ -250,12 +321,35 @@ export default function App() {
   // a specific piece of jewellery that means advertising something that does
   // not exist, so the choice has to be put in front of the user.
   const shouldUseExact =
-    subject?.prefer_exact && referenceId && referenceMode === "inspiration";
+    subject?.prefer_exact && references.length > 0 && referenceMode === "inspiration";
+
+  // Mirrors merge_styles() on the server: colour is unioned across
+  // references, round-robin so every one contributes before any repeats.
+  const mergedPalette = [];
+  const widest = Math.max(0, ...references.map((r) => r.style.palette.length));
+  for (let i = 0; i < widest; i += 1) {
+    for (const r of references) {
+      const name = r.style.palette[i];
+      if (name && !mergedPalette.includes(name)) mergedPalette.push(name);
+    }
+  }
+  mergedPalette.splice(5);
 
   const variantsByLocale = {};
   (job?.variants || []).forEach((v) => {
     (variantsByLocale[v.locale] ||= []).push(v);
   });
+
+  // One flat list in the order they are shown, so the lightbox's arrows walk
+  // the grid rather than jumping around it.
+  const shots = Object.entries(variantsByLocale).flatMap(([locale, list]) =>
+    list.map((v) => ({
+      src: `/api/jobs/${job.job_id}/image/${v.file}${job._v ? `?v=${job._v}` : ""}`,
+      label: (meta?.locales || []).find((l) => l.key === locale)?.label || locale,
+      detail: `${FORMAT_LABELS[v.format] || v.format}, ${v.headline_px}px`,
+      alt: job.copy?.[locale]?.alt_text,
+    }))
+  );
 
   return (
     <div className="app">
@@ -337,17 +431,36 @@ export default function App() {
             </div>
 
             <div style={{ marginTop: 16 }}>
-              <Drop label="Reference photo" hint="A photo of the actual thing"
-                    file={referenceFile} onPick={uploadReference}
-                    onClear={clearReference} />
+              <Drop label={references.length ? "Add more references" : "Reference photos"}
+                    hint="One or several — a photo of the actual thing, or a look to match"
+                    onPick={uploadReferences} multiple />
             </div>
 
-            {referenceStyle && (
+            {references.length > 0 && (
               <>
+                <ul className="refs">
+                  {references.map((r, i) => (
+                    <li key={r.id}>
+                      <img src={r.url} alt="" />
+                      {/* Order is load-bearing in edit mode: the first is the
+                          subject, the rest are context. */}
+                      {referenceMode === "edit" && (
+                        <span className="rank">{i === 0 ? "subject" : "context"}</span>
+                      )}
+                      <button type="button" onClick={() => removeReference(r.id)}
+                              aria-label={`Remove ${r.name}`}>×</button>
+                    </li>
+                  ))}
+                </ul>
                 <div className="hint">
                   Read locally, no model call:{" "}
-                  <b>{referenceStyle.palette.join(", ")}</b>, {referenceStyle.brightness} and{" "}
-                  {referenceStyle.temperature}
+                  <b>{mergedPalette.join(", ")}</b>
+                  {references.length > 1 && (
+                    <>
+                      {" "}— the colours your {references.length} references have
+                      between them.
+                    </>
+                  )}
                 </div>
 
                 <div className="modes" role="group" aria-label="How to use the reference photo">
@@ -606,6 +719,10 @@ export default function App() {
                         src={`/api/jobs/${job.job_id}/image/${v.file}${job._v ? `?v=${job._v}` : ""}`}
                         format={v.format}
                         showSafe={showSafe}
+                        onOpen={() => setZoomed(
+                          shots.findIndex((sh) => sh.src.startsWith(
+                            `/api/jobs/${job.job_id}/image/${v.file}`))
+                        )}
                       />
                       {copy && (
                         <div className="caption" lang={localeMeta?.bcp47}>
@@ -636,6 +753,17 @@ export default function App() {
           </>
         )}
       </main>
+
+      {zoomed != null && zoomed >= 0 && (
+        <Lightbox
+          shots={shots}
+          index={zoomed}
+          onClose={() => setZoomed(null)}
+          onMove={(step) =>
+            setZoomed((i) => (i + step + shots.length) % shots.length)
+          }
+        />
+      )}
     </div>
   );
 }

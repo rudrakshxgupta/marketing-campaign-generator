@@ -48,6 +48,9 @@ logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
+#: FLUX.2 accepts eight reference images in total: the subject plus seven.
+MAX_EXTRA_REFERENCES = 7
+
 #: Model id -> URL path. The docs are explicit that these differ, and getting
 #: it wrong produces a 404 that reads like a missing deployment.
 #:
@@ -245,6 +248,7 @@ class FluxImageClient:
         image: bytes,
         mime: str = "image/png",
         draft: bool = False,
+        extras: tuple[bytes, ...] = (),
     ) -> ImageResult:
         model = self._settings.flux_draft_model if draft else self._settings.flux_model
         body = {
@@ -254,6 +258,17 @@ class FluxImageClient:
             # Reference images go inline as base64 here, not as multipart.
             "input_image": base64.b64encode(image).decode("ascii"),
         }
+        # FLUX.2 numbers its additional references rather than taking a list:
+        # input_image_2 through input_image_8. Beyond that the service rejects
+        # the body, so the cap is enforced here where the reason is visible
+        # rather than surfacing as a 400 nobody can read.
+        for index, extra in enumerate(extras[:MAX_EXTRA_REFERENCES], start=2):
+            body[f"input_image_{index}"] = base64.b64encode(extra).decode("ascii")
+        if len(extras) > MAX_EXTRA_REFERENCES:
+            logger.warning(
+                "%d reference images supplied, sending the first %d",
+                len(extras) + 1, MAX_EXTRA_REFERENCES + 1,
+            )
         return await self._post(model, body)
 
 

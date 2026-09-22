@@ -164,10 +164,13 @@ class BudgetedImageBackend:
         image: bytes,
         mime: str = "image/png",
         draft: bool = False,
+        #: Further reference images. The first image is the subject; these
+        #: are context. Ignored by backends that take a single input.
+        extras: tuple[bytes, ...] = (),
     ) -> ImageResult:
         self._check()
         result = await self._inner.edit(
-            prompt=prompt, image=image, mime=mime, draft=draft
+            prompt=prompt, image=image, mime=mime, draft=draft, extras=extras
         )
         self._record(f"edit draft={draft}")
         return result

@@ -20,7 +20,7 @@ import io
 from PIL import Image, ImageDraw
 
 from app.foundry.image_client import ImageResult, MaiError
-from app.imaging.dimensions import is_legal
+from app.imaging.dimensions import MAI, Capabilities
 
 
 def _palette(seed: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
@@ -89,7 +89,15 @@ def _wrap(text: str, width: int) -> list[str]:
 class MockImageClient:
     """Implements :class:`~app.foundry.image_client.ImageBackend`."""
 
-    def __init__(self, *, latency_s: float = 0.0) -> None:
+    def __init__(
+        self, *, latency_s: float = 0.0, caps: Capabilities = MAI
+    ) -> None:
+        # Which model is being stood in for. Hard-coding MAI's 1 MP budget
+        # made mock mode useless for the backend actually shipped on: the
+        # pipeline plans 1088x1344 for FLUX's 4 MP, and the mock rejected its
+        # own planner's output. Offline development is the entire point of
+        # this class, so it has to mirror whichever model is configured.
+        self._caps = caps
         self._latency_s = latency_s
 
     async def generate(
@@ -104,10 +112,11 @@ class MockImageClient:
     ) -> ImageResult:
         # Enforce the same limits the service does, so a dimension bug fails in
         # tests instead of in production.
-        if not is_legal(width, height):
+        if not self._caps.accepts(width, height):
             raise MaiError(
-                f"{width}x{height} violates MAI limits "
-                f"(sides >= 768, product <= 1048576)"
+                f"{width}x{height} violates {self._caps.name} limits "
+                f"(sides >= {self._caps.min_side}, "
+                f"product <= {self._caps.max_pixels})"
             )
         if self._latency_s:
             await asyncio.sleep(self._latency_s)
@@ -130,6 +139,9 @@ class MockImageClient:
         image: bytes,
         mime: str = "image/png",
         draft: bool = False,
+        #: Further reference images. The first image is the subject; these
+        #: are context. Ignored by backends that take a single input.
+        extras: tuple[bytes, ...] = (),
     ) -> ImageResult:
         if mime not in ("image/png", "image/jpeg"):
             raise MaiError(f"edits accepts PNG or JPEG, got {mime}")

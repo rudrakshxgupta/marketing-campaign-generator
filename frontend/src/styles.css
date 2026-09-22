@@ -479,3 +479,64 @@ textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
   .stage { overflow: visible; min-height: 60vh; }
   .action { position: sticky; bottom: 0; z-index: 2; }
 }
+
+/* ---------------------------------------------------- reference moodboard */
+
+.refs {
+  list-style: none; margin: 10px 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(66px, 1fr)); gap: 7px;
+}
+.refs li { position: relative; aspect-ratio: 1; }
+.refs img {
+  width: 100%; height: 100%; object-fit: cover;
+  border-radius: var(--r); border: 1px solid var(--stone-2); display: block;
+}
+/* In edit mode the order is load-bearing -- first is the subject, the rest
+   are context -- so it is labelled rather than left to be inferred. */
+.refs .rank {
+  position: absolute; left: 4px; bottom: 4px;
+  font-size: 9.5px; font-weight: 600; color: #fff;
+  background: rgba(22, 32, 46, 0.82); padding: 1px 5px; border-radius: 3px;
+}
+.refs li button {
+  position: absolute; top: -5px; right: -5px;
+  width: 19px; height: 19px; border-radius: 50%;
+  background: var(--ink); color: #fff; border: 0;
+  font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
+}
+.refs li button:hover { background: var(--bad); }
+
+/* -------------------------------------------------------------- lightbox */
+
+.zoom {
+  appearance: none; display: block; width: 100%; padding: 0;
+  background: none; border: 0; cursor: zoom-in;
+}
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(8, 9, 12, 0.92);
+  display: grid; place-items: center;
+  padding: 24px;
+}
+.lightbox-inner {
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 100%; min-height: 0;
+}
+.lightbox img {
+  /* Bounded by height, so a 9:16 story fits the window rather than running
+     off it -- the whole point is seeing the creative complete. */
+  max-height: calc(100vh - 116px);
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: var(--r);
+  display: block;
+  margin: 0 auto;
+}
+.lightbox-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  color: var(--stage-text);
+}
+.lightbox-bar .who { font-size: 14px; font-weight: 600; }
+.lightbox-bar .what { font-size: 12px; color: var(--stage-text-2); }
+.lightbox-bar .spacer { flex: 1; }

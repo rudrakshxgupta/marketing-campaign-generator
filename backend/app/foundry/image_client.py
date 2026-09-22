@@ -112,6 +112,9 @@ class ImageBackend(Protocol):
         image: bytes,
         mime: str = "image/png",
         draft: bool = False,
+        #: Further reference images. The first image is the subject; these
+        #: are context. Ignored by backends that take a single input.
+        extras: tuple[bytes, ...] = (),
     ) -> ImageResult: ...
 
 
@@ -299,6 +302,9 @@ class MaiImageClient:
         image: bytes,
         mime: str = "image/png",
         draft: bool = False,
+        #: Further reference images. The first image is the subject; these
+        #: are context. Ignored by backends that take a single input.
+        extras: tuple[bytes, ...] = (),
     ) -> ImageResult:
         if mime not in ("image/png", "image/jpeg"):
             raise MaiError(f"edits accepts PNG or JPEG, got {mime}")
