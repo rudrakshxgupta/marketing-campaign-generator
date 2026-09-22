@@ -54,6 +54,27 @@ class Settings:
         default_factory=lambda: os.environ.get("MAI_TEXT_API_VERSION", "2024-12-01-preview")
     )
 
+    # --- image backend -----------------------------------------------------
+    #: Which image model to use: "mai" or "flux".
+    #:
+    #: Both are implemented behind the same protocol. MAI is the Microsoft
+    #: model and stays the default; FLUX is selectable because free and student
+    #: subscriptions get zero MAI image quota, and an unusable default is worse
+    #: than a configurable one.
+    image_backend: str = field(
+        default_factory=lambda: os.environ.get("IMAGE_BACKEND", "mai").lower()
+    )
+    flux_model: str = field(
+        default_factory=lambda: os.environ.get("FLUX_MODEL", "FLUX.2-pro")
+    )
+    flux_draft_model: str = field(
+        default_factory=lambda: os.environ.get("FLUX_DRAFT_MODEL", "FLUX.2-flex")
+    )
+    #: FLUX.2-pro allows 15 RPM at the lowest tier, against MAI's 2.
+    flux_rpm: float = field(
+        default_factory=lambda: float(os.environ.get("FLUX_RPM", "10"))
+    )
+
     # --- Rate limiting -----------------------------------------------------
     #: MAI Global Standard allows 2-12 RPM by tier. Default to the safest.
     mai_rpm: float = field(
@@ -105,6 +126,33 @@ class Settings:
     @property
     def cache_root(self) -> Path:
         return self.storage_root / "cache"
+
+    @property
+    def resource_name(self) -> str:
+        """Bare resource name, parsed from whichever endpoint form was given."""
+        host = self.foundry_endpoint.split("//")[-1]
+        return host.split(".")[0] if host else ""
+
+    @property
+    def flux_endpoint(self) -> str:
+        """FLUX lives on a different host to MAI on the same resource.
+
+        MAI:  <resource>.services.ai.azure.com
+        FLUX: <resource>.api.cognitive.microsoft.com
+
+        Derived rather than configured separately, so there is one endpoint to
+        get right instead of two that can disagree.
+        """
+        override = os.environ.get("FLUX_ENDPOINT", "").rstrip("/")
+        if override:
+            return override
+        return f"https://{self.resource_name}.api.cognitive.microsoft.com"
+
+    @property
+    def capabilities(self):
+        from app.imaging.dimensions import CAPABILITIES, MAI
+
+        return CAPABILITIES.get(self.image_backend, MAI)
 
     @property
     def generations_url(self) -> str:

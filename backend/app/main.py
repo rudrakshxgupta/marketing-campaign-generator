@@ -28,6 +28,7 @@ from app.copy.fidelity import SubjectKind, detect_kind
 from app.copy.strategy import BrandKit, CreativeBrief, CreativeStrategy, NegativeSpace
 from app.foundry.budget import BudgetedImageBackend, BudgetExceeded
 from app.foundry.cache import CachingImageBackend
+from app.foundry.flux_client import FluxImageClient
 from app.foundry.image_client import MaiImageClient, MaiRateLimited
 from app.copy.transcreate import FoundryCopyWriter, StubCopyWriter
 from app.foundry.mock_client import MockImageClient
@@ -147,7 +148,12 @@ def build_image_backend(settings) -> tuple[object, object | None, object | None]
 
     Returns (backend, budget, cache) so the API can report spend.
     """
-    base = MockImageClient() if settings.mock else MaiImageClient(settings)
+    if settings.mock:
+        base = MockImageClient()
+    elif settings.image_backend == "flux":
+        base = FluxImageClient(settings)
+    else:
+        base = MaiImageClient(settings)
 
     if settings.mock:
         # No spend to guard and no benefit to caching placeholders.
@@ -215,8 +221,12 @@ async def healthz() -> dict:
     return {
         "ok": True,
         "mock": settings.mock,
-        "image_deployment": settings.image_deployment,
-        "mai_rpm": settings.mai_rpm,
+        "image_backend": settings.image_backend,
+        "image_model": (
+            settings.flux_model if settings.image_backend == "flux"
+            else settings.image_deployment
+        ),
+        "max_pixels": settings.capabilities.max_pixels,
     }
 
 
@@ -267,15 +277,18 @@ async def meta() -> dict:
     """
     from app.imaging.dimensions import plan_for
 
+    caps = get_settings().capabilities
     return {
+        "backend": {"name": caps.name, "max_pixels": caps.max_pixels},
         "formats": [
             {
                 "key": key,
                 "target": [plan.target_w, plan.target_h],
                 "generate": [plan.gen_w, plan.gen_h],
                 "requires_crop": plan.requires_crop,
+                "upscale": round(plan.upscale_factor, 3),
             }
-            for key, plan in ((k, plan_for(k)) for k in FORMATS)
+            for key, plan in ((k, plan_for(k, caps)) for k in FORMATS)
         ],
         "locales": [
             {
@@ -495,6 +508,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
         renderer=app.state.renderer,
         writer=app.state.writer,
         storage=settings.storage_root,
+        capabilities=settings.capabilities,
     )
     try:
         job.state = "generating"

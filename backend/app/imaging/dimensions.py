@@ -41,6 +41,57 @@ MIN_ASPECT = MIN_SIDE / MAX_SIDE  # 0.5626
 MAX_ASPECT = MAX_SIDE / MIN_SIDE  # 1.7773
 
 
+@dataclass(frozen=True)
+class Capabilities:
+    """What one image model will accept.
+
+    The pixel budget is the single most consequential difference between
+    backends, so it is data rather than constants scattered through the code.
+    MAI's 1 MP forces every Instagram format through a crop-and-upscale;
+    FLUX's 4 MP clears the largest format (1.46 MP) outright, so the same
+    campaign needs no interpolation at all.
+    """
+
+    name: str
+    min_side: int
+    max_pixels: int
+    #: Diffusion models commonly want dimensions on a grid. Generating slightly
+    #: off-target and cropping back is cheap; a 400 is not.
+    multiple_of: int = 1
+
+    @property
+    def max_side(self) -> int:
+        return self.max_pixels // self.min_side
+
+    @property
+    def min_aspect(self) -> float:
+        return self.min_side / self.max_side
+
+    @property
+    def max_aspect(self) -> float:
+        return self.max_side / self.min_side
+
+    def accepts(self, width: int, height: int) -> bool:
+        return (
+            width >= self.min_side
+            and height >= self.min_side
+            and width * height <= self.max_pixels
+        )
+
+
+#: MAI-Image-2.x. Every Instagram format needs an upscale, and two of them
+#: cannot be generated at their true aspect at all.
+MAI = Capabilities(name="MAI-Image-2.6", min_side=768, max_pixels=1_048_576)
+
+#: FLUX.2 [pro] and [flex]. 4 MP covers every Instagram size natively, so
+#: nothing is upscaled and the story format stops being a special case.
+FLUX2 = Capabilities(
+    name="FLUX.2", min_side=256, max_pixels=4_000_000, multiple_of=32
+)
+
+CAPABILITIES = {"mai": MAI, "flux": FLUX2}
+
+
 class DimensionError(ValueError):
     """Raised when a requested delivery size cannot be satisfied at all."""
 
@@ -141,15 +192,39 @@ def max_legal_dimensions(aspect: float) -> tuple[int, int]:
     return best[2], best[3]
 
 
-def resolve_dimensions(target_w: int, target_h: int) -> GenerationPlan:
+def _round_to(value: int, grid: int) -> int:
+    return value if grid <= 1 else max(grid, round(value / grid) * grid)
+
+
+def resolve_dimensions(
+    target_w: int, target_h: int, caps: Capabilities = MAI
+) -> GenerationPlan:
     """Plan a generation for a desired delivery size.
 
     When the delivery aspect is generable we match it and only upscale. When it
-    is not -- 1.91:1 landscape, or 9:16 by a single pixel -- we generate at the
-    nearest legal aspect and mark the plan for cropping.
+    is not -- 1.91:1 landscape, or 9:16 by a single pixel on MAI -- we generate
+    at the nearest legal aspect and mark the plan for cropping.
+
+    With a large enough pixel budget the whole problem disappears: if the
+    target fits outright we generate it exactly, and there is nothing to crop
+    or upscale.
     """
     if target_w <= 0 or target_h <= 0:
         raise DimensionError("target dimensions must be positive")
+
+    # Best case: the model can just produce what we want.
+    if caps.accepts(target_w, target_h):
+        snapped_w = _round_to(target_w, caps.multiple_of)
+        snapped_h = _round_to(target_h, caps.multiple_of)
+        if caps.accepts(snapped_w, snapped_h):
+            return GenerationPlan(
+                target_w=target_w,
+                target_h=target_h,
+                gen_w=snapped_w,
+                gen_h=snapped_h,
+                # A grid snap moves the aspect slightly, so crop back to exact.
+                requires_crop=(snapped_w, snapped_h) != (target_w, target_h),
+            )
 
     target_aspect = target_w / target_h
     clamped = min(max(target_aspect, MIN_ASPECT), MAX_ASPECT)
@@ -185,7 +260,7 @@ FORMATS: dict[str, tuple[int, int]] = {
 }
 
 
-def plan_for(format_key: str) -> GenerationPlan:
+def plan_for(format_key: str, caps: Capabilities = MAI) -> GenerationPlan:
     """Resolve one of the named Instagram formats."""
     try:
         target_w, target_h = FORMATS[format_key]
@@ -193,4 +268,4 @@ def plan_for(format_key: str) -> GenerationPlan:
         raise DimensionError(
             f"unknown format {format_key!r}; expected one of {sorted(FORMATS)}"
         ) from None
-    return resolve_dimensions(target_w, target_h)
+    return resolve_dimensions(target_w, target_h, caps)

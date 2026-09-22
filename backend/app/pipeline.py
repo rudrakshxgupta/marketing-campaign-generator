@@ -38,7 +38,7 @@ from app.imaging.compose import (
     load_png,
     to_png,
 )
-from app.imaging.dimensions import plan_for
+from app.imaging.dimensions import MAI, Capabilities, plan_for
 from app.imaging.fidelity import FidelityReport, compare
 from app.imaging.overlay import FitReport, OverlayRenderer, TextBox
 from app.imaging.safezones import SafeZoneViolation
@@ -119,11 +119,15 @@ class CampaignPipeline:
         renderer: OverlayRenderer | None = None,
         writer: CopyWriter | None = None,
         storage: Path | None = None,
+        capabilities: Capabilities = MAI,
     ) -> None:
         self._images = images
         self._renderer = renderer or OverlayRenderer()
         self._writer = writer or StubCopyWriter()
         self._last_fidelity: FidelityReport | None = None
+        # What the chosen image model will accept. MAI's 1 MP forces a
+        # crop-and-upscale on every Instagram format; FLUX's 4 MP does not.
+        self._caps = capabilities
         self._storage = storage or Path("storage")
         self._owns_renderer = renderer is None
 
@@ -169,7 +173,7 @@ class CampaignPipeline:
         if economy and len(formats) > 1:
             master_key = master_format_for(formats)
             result.master_format = master_key
-            master_plan = plan_for(master_key)
+            master_plan = plan_for(master_key, self._caps)
 
             master_png = await self._generate_base(
                 prompt, brief, master_plan, reference, reference_mime, edit_instruction
@@ -181,7 +185,7 @@ class CampaignPipeline:
             for format_key in formats:
                 if format_key == master_key:
                     continue
-                plan = plan_for(format_key)
+                plan = plan_for(format_key, self._caps)
                 # Cover-crop the master down. Only ever taller -> wider, which
                 # discards the top and bottom rather than inventing pixels.
                 bases[format_key] = _cover_crop(master, plan.target_w, plan.target_h)
@@ -192,7 +196,7 @@ class CampaignPipeline:
             )
         else:
             for format_key in formats:
-                plan = plan_for(format_key)
+                plan = plan_for(format_key, self._caps)
                 base_png = await self._generate_base(
                     prompt, brief, plan, reference, reference_mime, edit_instruction
                 )
