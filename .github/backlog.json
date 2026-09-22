@@ -89,6 +89,11 @@
       "name": "area: cost",
       "color": "FBCA04",
       "description": "Protecting the image quota"
+    },
+    {
+      "name": "area: fidelity",
+      "color": "0E8A16",
+      "description": "Preserving real subjects through an edit"
     }
   ],
   "milestones": [
@@ -523,6 +528,30 @@
       ],
       "milestone": "Phase 4 - compliance and formats",
       "body": "The two reference modes behave very differently and the user has to choose between them. A cheap classifier could pre-select the likely one so the common case is a single click rather than a decision.\n\n- \"remove the\", \"change the background\", \"make the sky\", \"keep the product\" -> **edit**\n- \"like this\", \"similar vibe\", \"in this style\", \"inspired by\" -> **inspiration**\n\n**It must never override an explicit choice**, and it must never flip the default *to* edit without the user actively confirming - edit mode carries the rights attestation and the derivative-work exposure, so an inferred selection cannot be what unlocks it.\n\nThis is a UI affordance, not an authorisation step."
+    },
+    {
+      "title": "Preserve the real subject through an edit (real estate, products, jewellery)",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: fidelity",
+        "area: imaging",
+        "phase: 2",
+        "priority: high"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "When a user uploads a photo of something they actually sell, the model must **restage** it, not **redesign** it.\n\nThis is not a quality preference. MAI's edit mode explicitly supports *text updates* and attribute changes, so left to itself it will re-letter a label, add a balcony, or turn a four-storey building into a five-storey one. For a property listing that is not a bad render - it is an advertisement for a building that does not exist, and the person running the tool cannot see the problem because the output looks excellent.\n\n## Two mechanisms, because a prompt is advisory\n\n**1. A clause that names the actual failures.** Generic wording does not work: a model told \"keep the building the same\" still changes the floor count, because it has no reason to think that is what \"the same\" means. So the clause enumerates per subject kind - for architecture that is floor count, every window, door and balcony, roofline, facade material, structural layout, railings and parapets, signage and unit numbers. Architecture gets an extra sentence: *this is a real, existing property and must remain recognisable as the same building*. Person gets one too - do not beautify, slim, lighten or retouch.\n\nEight kinds: architecture, product, food, apparel, jewellery, vehicle, person, generic.\n\n**2. A measurement afterwards** that checks whether the model listened.\n\n## Why it cannot be whole-frame similarity\n\nThe first implementation compared the frames directly and was **exactly backwards** - it rejected a legitimate sky change and passed an extra floor.\n\nRestaging is *supposed* to change the background. Swapping a plain sky for a studio backdrop moves most of the pixels while leaving the subject untouched; adding a storey moves very few and destroys the listing's accuracy. Across the whole frame the harmless edit scores worse than the dangerous one.\n\nSo the subject is located first - it is the structured part of the image - and three things are measured: similarity inside the subject, change in its extent, and change in detail density inside that extent.\n\n| Case | Similarity | Extent | Detail | Verdict |\n|---|---|---|---|---|\n| identical | 1.000 | 1.00 | +0.0% | pass |\n| sky recoloured *(legit)* | 1.000 | 1.00 | +0.2% | pass |\n| bokeh background *(legit)* | 1.000 | 1.00 | +0.1% | pass |\n| **one extra floor** | 1.000 | 0.78 | +0.0% | **reject** |\n| **extra window per floor** | 1.000 | 0.77 | +0.0% | **reject** |\n| **facade changed** | -0.092 | 0.74 | -87.2% | **reject** |\n\nThe extra floor scores **1.000 on similarity** - the original building is untouched, and only the extent signal catches it. One measure is not enough.\n\n## Two subtleties that were bugs first\n\n- **The structure threshold comes from the original only.** Deriving it per image means recolouring the sky moves that frame's statistics, moves its threshold, and silently reclassifies the building.\n- **It is `mean + 2 sigma`, not a percentile.** The subject is usually a minority of the frame, so any percentile below ~0.9 lands inside the flat majority and the mask fills with noise. Measured: p75 was 4.5, well inside the flat region; mean+2sigma was 31.7, where the real window edges are.\n\n## Behaviour\n\n`subject_kind` is inferred from the brief when unset, but an explicit value always wins - the inference is a UI convenience, never the only safeguard. Preservation defaults **on**.\n\nA failed check marks every variant for review rather than discarding the result: the marketer may look and accept it, but a drifted subject can never present itself as ready to publish.\n\n**Files**: `backend/app/copy/fidelity.py`, `backend/app/imaging/fidelity.py`, `backend/tests/test_fidelity.py` (24 tests), [docs/fidelity.md](../blob/main/docs/fidelity.md)\n\n**Not calibrated against real MAI output yet** - thresholds are reasoned, not measured. Expect tuning after #29."
+    },
+    {
+      "title": "Calibrate fidelity thresholds against real MAI edits",
+      "state": "open",
+      "labels": [
+        "status: pending",
+        "area: fidelity",
+        "phase: 3"
+      ],
+      "milestone": "Phase 3 - languages",
+      "body": "Subject preservation is verified against **synthetic buildings only**. The thresholds - 0.92 similarity for architecture, 0.90 extent overlap, +/-15% detail density - are reasoned from what the signals mean, not measured against real model output.\n\nReal photographs differ from the test fixtures in ways that matter: grain, compression, depth of field, and a subject that does not have crisp geometric edges. A restaging that is entirely acceptable may score lower than a synthetic one that is not.\n\n**Tasks**\n\n- [ ] Collect a small set of real edits: property exteriors, interiors, product shots, jewellery\n- [ ] Score each, and have a human label whether the subject actually survived\n- [ ] Plot the two against each other and move the thresholds to where they separate\n- [ ] Check the false-positive rate specifically. Over-rejecting legitimate restaging would make the feature worse than not having it, because users learn to switch it off\n- [ ] Re-check the dramatic cases: day to night changes facade tone legitimately\n\nDepends on #29 for a working deployment. Until then the current thresholds are the honest best guess, and the failure direction is right - it flags for review rather than discarding."
     }
   ]
 }

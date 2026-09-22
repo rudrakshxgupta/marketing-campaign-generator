@@ -9,11 +9,11 @@ campaign creatives in Indian languages, built on Microsoft AI Foundry with
 | | |
 |---|---|
 | Repository | [rudrakshxgupta/marketing-campaign-generator](https://github.com/rudrakshxgupta/marketing-campaign-generator) (private) |
-| Tests | **155 passing**, ~30 seconds |
+| Tests | **179 passing**, ~36 seconds |
 | Code | 3,246 lines across 20 modules · 1,169 lines of tests |
-| Issues | **36 total — 18 built, 18 pending** |
+| Issues | **38 total — 19 built, 19 pending** |
 | Phase 1 | ✅ Complete |
-| Phase 2 | 6 of 11 — everything buildable without Azure is built |
+| Phase 2 | 7 of 12 — everything buildable without Azure is built |
 | Azure | **Not yet connected.** Nothing has run against the live service. |
 
 ---
@@ -196,7 +196,41 @@ Style extraction never touches the subject; the reference's own silhouette,
 marks and faces go into `must_not_depict`. That separation is the line between
 "in the style of" and a copy.
 
-### 3.7 Test coverage
+### 3.7 Subject preservation — real estate and real products
+
+When a user uploads a photo of something they actually sell, the model must
+**restage** it, not **redesign** it. MAI's edit mode supports attribute changes,
+so left alone it will add a balcony or turn a four-storey building into a
+five-storey one. For a property listing that is not a bad render — it is an
+advertisement for a building that does not exist.
+
+Two mechanisms, because a prompt is advisory:
+
+1. **A clause naming the actual failures**, per subject kind. For architecture:
+   floor count, every window and balcony, roofline, façade material, structural
+   layout. Generic "keep it the same" does not work — a model has no reason to
+   think floor count is what "the same" means.
+2. **A measurement afterwards** that checks whether it listened.
+
+The measurement cannot be whole-frame similarity. Restaging is *supposed* to
+change the background, so a harmless sky swap moves more pixels than a
+dangerous extra storey. The first implementation got this exactly backwards and
+the test caught it. The subject is now located first, then three things are
+measured: similarity inside it, change in its extent, and change in detail
+density.
+
+| Case | Verdict |
+|---|---|
+| sky recoloured, bokeh added | ✅ pass |
+| one extra floor · extra window · façade changed | ❌ reject |
+
+The extra floor scores **1.000 on similarity** — only the extent signal catches
+it. One measure would not be enough.
+
+Eight subject kinds; architecture and jewellery are held strictest. Details in
+[docs/fidelity.md](docs/fidelity.md).
+
+### 3.8 Test coverage
 
 | File | Tests | Covers |
 |---|---|---|
@@ -205,6 +239,7 @@ marks and faces go into `must_not_depict`. That separation is the line between
 | `test_overlay.py` | 27 | Indic shaping, auto-fit, containment |
 | `test_spend.py` | 20 | Cache, budget ceiling, economy mode |
 | `test_reference.py` | 14 | Style extraction, both reference modes |
+| `test_fidelity.py` | 24 | Subject preservation, all eight kinds |
 | `test_api.py` | 9 | HTTP surface, job lifecycle, bundle |
 | `test_ratelimit.py` | 8 | Token bucket, drain, backoff |
 
@@ -411,6 +446,7 @@ Inherent to the design rather than unfinished:
 | [docs/architecture.md](docs/architecture.md) | How the system works and why |
 | [docs/constraints.md](docs/constraints.md) | Every verified platform fact, with sources |
 | [docs/typography.md](docs/typography.md) | Indic rendering — the risky part |
+| [docs/fidelity.md](docs/fidelity.md) | Keeping a real subject unchanged through an edit |
 | [docs/api.md](docs/api.md) | HTTP surface and configuration |
 | [docs/code-map.md](docs/code-map.md) | Module-by-module reference |
 | [docs/compliance.md](docs/compliance.md) | Indian advertising law, safety, provenance |

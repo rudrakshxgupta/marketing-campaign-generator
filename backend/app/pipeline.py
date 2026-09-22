@@ -27,6 +27,7 @@ from app.copy.strategy import (
     render_edit_prompt,
     render_prompt,
 )
+from app.copy.fidelity import SubjectKind
 from app.copy.transcreate import CopyPack, CopyWriter, StubCopyWriter
 from app.foundry.image_client import ImageBackend
 from app.imaging.compose import (
@@ -38,6 +39,7 @@ from app.imaging.compose import (
     to_png,
 )
 from app.imaging.dimensions import plan_for
+from app.imaging.fidelity import FidelityReport, compare
 from app.imaging.overlay import FitReport, OverlayRenderer, TextBox
 from app.imaging.safezones import SafeZoneViolation
 
@@ -65,6 +67,8 @@ class CampaignResult:
     copy_pack: CopyPack | None = None
     image_calls: int = 0
     economy: bool = False
+    #: Present when an edit ran with subject preservation on.
+    fidelity: FidelityReport | None = None
     #: Which format was generated and cropped down from, in economy mode.
     master_format: str | None = None
 
@@ -119,6 +123,7 @@ class CampaignPipeline:
         self._images = images
         self._renderer = renderer or OverlayRenderer()
         self._writer = writer or StubCopyWriter()
+        self._last_fidelity: FidelityReport | None = None
         self._storage = storage or Path("storage")
         self._owns_renderer = renderer is None
 
@@ -167,7 +172,7 @@ class CampaignPipeline:
             master_plan = plan_for(master_key)
 
             master_png = await self._generate_base(
-                prompt, master_plan, reference, reference_mime, edit_instruction
+                prompt, brief, master_plan, reference, reference_mime, edit_instruction
             )
             result.image_calls += 1
             master = finalize_base(master_png, master_plan)
@@ -189,7 +194,7 @@ class CampaignPipeline:
             for format_key in formats:
                 plan = plan_for(format_key)
                 base_png = await self._generate_base(
-                    prompt, plan, reference, reference_mime, edit_instruction
+                    prompt, brief, plan, reference, reference_mime, edit_instruction
                 )
                 result.image_calls += 1
                 bases[format_key] = finalize_base(base_png, plan)
@@ -212,6 +217,7 @@ class CampaignPipeline:
                 )
                 result.variants.append(variant)
 
+        result.fidelity = self._last_fidelity
         logger.info(
             "campaign %s: %d image call(s) -> %d deliverables (%d call(s) saved)",
             campaign_id, result.image_calls, len(result.variants), result.calls_saved,
@@ -221,38 +227,66 @@ class CampaignPipeline:
     async def _generate_base(
         self,
         prompt: str,
+        brief: CreativeBrief,
         plan,
         reference: bytes | None,
         reference_mime: str,
         edit_instruction: str,
     ) -> bytes:
         if reference is not None:
-            return await self._generate_from_reference(
-                reference, reference_mime, edit_instruction, plan
+            png, report = await self._generate_from_reference(
+                reference,
+                reference_mime,
+                edit_instruction,
+                plan,
+                subject_kind=brief.subject_kind,
+                preserve_subject=brief.preserve_subject,
             )
+            self._last_fidelity = report
+            return png
         generated = await self._images.generate(
             prompt=prompt, width=plan.gen_w, height=plan.gen_h
         )
         return generated.png
 
     async def _generate_from_reference(
-        self, reference: bytes, mime: str, instruction: str, plan
-    ) -> bytes:
+        self,
+        reference: bytes,
+        mime: str,
+        instruction: str,
+        plan,
+        *,
+        subject_kind: SubjectKind = SubjectKind.GENERIC,
+        preserve_subject: bool = True,
+    ) -> tuple[bytes, FidelityReport | None]:
         """Image-to-image path.
 
         The edits endpoint accepts no width/height, so geometry is handled on
         both sides of the call: cover-crop the reference to the target aspect
         going in, and crop whatever comes back on the way out.
+
+        When preservation is on, the result is measured against the input. The
+        prompt asks the model to leave the subject alone; this is what checks
+        whether it did. A building with an extra storey renders beautifully and
+        misrepresents the property, so it cannot be left to the prompt alone.
         """
         prepared = _cover_crop(load_png(reference), plan.gen_w, plan.gen_h)
         edited = await self._images.edit(
-            prompt=render_edit_prompt(instruction or "Restage this on a clean studio backdrop"),
+            prompt=render_edit_prompt(
+                instruction or "Restage this on a clean studio backdrop",
+                preserve_subject=preserve_subject,
+                subject_kind=subject_kind,
+            ),
             image=to_png(prepared),
             mime="image/png",
         )
         with load_png(edited.png) as returned:
             adjusted = _cover_crop(returned.convert("RGB"), plan.gen_w, plan.gen_h)
-        return to_png(adjusted)
+
+        report = compare(prepared, adjusted, subject_kind) if preserve_subject else None
+        if report is not None and not report.passed:
+            logger.warning("subject fidelity failed -- %s", report.reason)
+        return to_png(adjusted), report
 
     async def _compose_variant(
         self,

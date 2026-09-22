@@ -49,7 +49,7 @@ python -m venv .venv
 .venv/Scripts/python -m playwright install chromium
 ```
 
-Run the tests (121, ~15s):
+Run the tests (179, ~36s):
 
 ```bash
 cd backend && ../.venv/Scripts/python -m pytest -q
@@ -143,7 +143,7 @@ backend/app/
   imaging/                  dimensions, safe zones, compositing, Chromium overlay
   copy/                     languages, prompt construction, transcreation
 docs/                       full documentation
-.github/backlog.json        29 issues as data, with an idempotent seeder
+.github/backlog.json        38 issues as data, with an idempotent seeder
 ```
 
 See [docs/code-map.md](docs/code-map.md) for the module-by-module reference.
@@ -173,6 +173,12 @@ plausible logo, which is a wrong logo — and describing a mark in a prompt asks
 the model to reproduce a trademark. Same for the product, maps of India, and
 the flag.
 
+**A real subject is never redesigned.** Upload a photo of a building and the
+model restages it — it does not add a floor or move the windows. The prompt
+names the specific features per subject kind, and the result is *measured*
+against the original, because a prompt is advisory and an altered building
+renders beautifully. See [docs/fidelity.md](docs/fidelity.md).
+
 **Copy is transcreated, not translated.** Each language is authored from a
 shared strategy, so the cultural referent can change and not just the words — a
 Diwali line becomes a *Pujo* line for Bengali.
@@ -200,7 +206,7 @@ the spend is intended.
 
 ## Status
 
-**155 tests pass.** Phase 1 is complete and most of Phase 2 with it:
+**179 tests pass.** Phase 1 is complete and most of Phase 2 with it:
 dimensions, safe zones, logo compositing, the Chromium text pipeline in seven
 locales, the campaign pipeline, the job API, bundle export, the spend controls
 above, and the reference-image path in both sub-modes.
@@ -212,5 +218,5 @@ gate, category compliance gates, and the React frontend.
 `MaiImageClient` is written and unit-tested but has **never touched the real
 endpoint** — mock mode is on by default and a test asserts it stays on.
 
-36 issues track everything: **18 built, 18 pending**. See
+38 issues track everything: **19 built, 19 pending**. See
 [docs/roadmap.md](docs/roadmap.md).

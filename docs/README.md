@@ -10,6 +10,7 @@ languages, built on Microsoft AI Foundry with **MAI-Image-2.6**.
 | [architecture.md](architecture.md) | How the system works and why it is shaped this way |
 | [constraints.md](constraints.md) | The verified platform facts every design choice rests on |
 | [typography.md](typography.md) | Indic text rendering — the highest-risk component |
+| [fidelity.md](fidelity.md) | Keeping a real building or product unchanged through an edit |
 | [api.md](api.md) | HTTP surface, request/response shapes, configuration |
 | [code-map.md](code-map.md) | Module-by-module reference |
 | [compliance.md](compliance.md) | Indian advertising law, content safety, provenance |

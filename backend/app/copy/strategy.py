@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.copy.fidelity import SubjectKind, preservation_clause
+
 Register = Literal["formal", "neutral", "conversational"]
 InputMode = Literal["text", "style_transfer", "direct_edit"]
 
@@ -94,6 +96,13 @@ class CreativeBrief:
     negative_space: NegativeSpace = field(default_factory=NegativeSpace)
     must_not_depict: tuple[str, ...] = ()
     source_mode: InputMode = "text"
+    #: What is being photographed. Drives the preservation clause on the edit
+    #: path and the strictness of the fidelity check afterwards.
+    subject_kind: SubjectKind = SubjectKind.GENERIC
+    #: Whether the subject must survive the edit untouched. On by default:
+    #: someone uploading a photo of a real building or a real product is
+    #: asking for it to be restaged, not redesigned.
+    preserve_subject: bool = True
 
 
 # --------------------------------------------------------------------------
@@ -196,21 +205,26 @@ def render_prompt(brief: CreativeBrief, *, crop_safe: bool = False) -> str:
     return " ".join(parts)
 
 
-def render_edit_prompt(instruction: str, *, preserve_product: bool = True) -> str:
+def render_edit_prompt(
+    instruction: str,
+    *,
+    preserve_subject: bool = True,
+    subject_kind: SubjectKind = SubjectKind.GENERIC,
+) -> str:
     """Prompt for the image-to-image path.
 
-    MAI's edit mode explicitly supports *text updates*, which means it will
-    happily re-letter packaging it is shown. For the "keep my product, restage
-    the scene" flow -- the highest-value operation for a seller with a real
-    phone photo -- that has to be forbidden explicitly.
+    MAI's edit mode explicitly supports *text updates* and attribute changes,
+    which means left to itself it will happily re-letter packaging it is shown,
+    or "improve" a building into one the buyer will never find.
+
+    The preservation clause is per subject kind because generic wording is too
+    weak. A model told only "keep the building the same" will still quietly
+    change the floor count -- it has no reason to think that is what "the same"
+    means. :mod:`app.copy.fidelity` enumerates the failures that actually
+    happen for each kind of subject.
     """
     parts = [instruction.rstrip(". ") + "."]
-    if preserve_product:
-        parts.append(
-            "Keep the product completely unchanged: identical shape, identical "
-            "artwork, identical text, identical colours, identical position and "
-            "scale in the frame. Do not redraw, re-letter or re-render any part "
-            "of the product or its printed text."
-        )
+    if preserve_subject:
+        parts.append(preservation_clause(subject_kind))
     parts.append("Do not add any new text, logo or watermark anywhere in the image.")
     return " ".join(parts)

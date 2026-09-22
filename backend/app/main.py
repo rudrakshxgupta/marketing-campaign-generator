@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.copy.languages import DEFAULT_LOCALES, LOCALES
+from app.copy.fidelity import SubjectKind, detect_kind
 from app.copy.strategy import BrandKit, CreativeBrief, CreativeStrategy, NegativeSpace
 from app.foundry.budget import BudgetedImageBackend, BudgetExceeded
 from app.foundry.cache import CachingImageBackend
@@ -115,6 +116,20 @@ class GenerateRequest(BaseModel):
     edit_instruction: str = ""
     #: Required for edit mode. The user asserting they may use this image.
     rights_confirmed: bool = False
+
+    # --- subject preservation ----------------------------------------------
+    #: What is being photographed. Left unset it is inferred from the brief.
+    #: Drives how specifically the prompt forbids changes, and how strictly the
+    #: result is checked afterwards.
+    subject_kind: SubjectKind | None = None
+    #: Whether the subject must survive the edit untouched.
+    #:
+    #: On by default, and it matters most for real estate: a diffusion model
+    #: will happily give a building an extra storey or move its windows, which
+    #: for a property listing is not a render flaw but an advertisement for a
+    #: building that does not exist. Turn it off only when the subject is meant
+    #: to be reimagined.
+    preserve_subject: bool = True
 
 
 def build_image_backend(settings) -> tuple[object, object | None, object | None]:
@@ -317,6 +332,17 @@ async def get_job(job_id: str) -> dict:
         payload["image_calls"] = job.result.image_calls
         payload["calls_saved"] = job.result.calls_saved
         payload["economy"] = job.result.economy
+        if job.result.fidelity is not None:
+            report = job.result.fidelity
+            payload["fidelity"] = {
+                "subject_kind": report.kind.value,
+                "passed": report.passed,
+                "similarity": round(report.similarity, 4),
+                "extent_overlap": round(report.extent_iou, 3),
+                "detail_change": round(report.density_delta, 4),
+                "summary": report.describe(),
+                "reason": report.reason,
+            }
         payload["master_format"] = job.result.master_format
         payload["prompt"] = job.result.prompt
         payload["variants"] = [
@@ -429,10 +455,23 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
             f"{len(request.locales)} locales composited from each"
         )
 
+        # Inferred from the user's own words when not set explicitly. The
+        # inference is a convenience for the UI, never the only thing standing
+        # between a model and a misrepresented building -- an explicit
+        # subject_kind always wins.
+        subject_kind = request.subject_kind or detect_kind(request.brief)
         brief = CreativeBrief(
             subject=request.brief,
             negative_space=NegativeSpace(region="bottom_left", coverage_pct=32),
+            subject_kind=subject_kind,
+            preserve_subject=request.preserve_subject,
         )
+        if request.reference_id and request.reference_mode == "edit":
+            job.logs.append(
+                f"preserving the {subject_kind.value} subject"
+                if request.preserve_subject
+                else "subject preservation OFF - the subject may be redesigned"
+            )
         strategy = CreativeStrategy(
             proposition=request.proposition,
             benefit=request.benefit,
@@ -483,6 +522,13 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
             reference=reference_bytes,
             edit_instruction=request.edit_instruction,
         )
+
+        if result.fidelity is not None and not result.fidelity.passed:
+            reason = f"subject fidelity failed: {result.fidelity.reason}"
+            job.logs.append(reason)
+            for variant in result.variants:
+                variant.needs_review = True
+                variant.review_reasons = variant.review_reasons + (reason,)
 
         job.result = result
         job.bundle = export_bundle(
