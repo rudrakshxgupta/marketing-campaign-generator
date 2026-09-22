@@ -104,8 +104,7 @@ export default function App() {
           occasion,
           // The only claims the copy may make. Anything not listed here is
           // never invented.
-          facts: factsText.split("
-").map((f) => f.trim()).filter(Boolean),
+          facts: factsText.split(/\r?\n/).map((f) => f.trim()).filter(Boolean),
           formats, locales, economy,
           reference_id: referenceId,
           reference_mode: referenceMode,
@@ -184,8 +183,8 @@ export default function App() {
 
         <label style={{ marginTop: 12 }}>Offers &amp; facts <span style={{ opacity: 0.6 }}>(one per line, optional)</span></label>
         <textarea value={factsText} onChange={(e) => setFactsText(e.target.value)}
-                  placeholder={"30% off
-free delivery over 999"} style={{ minHeight: 52 }} />
+                  placeholder={"30% off\nfree delivery over 999"}
+                  style={{ minHeight: 52 }} />
         <div className="hint">
           The <b>only</b> claims the copy may make. Anything not listed here is
           never invented — a model that helpfully adds "50% off" has written a
