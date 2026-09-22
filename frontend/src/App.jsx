@@ -355,11 +355,17 @@ export default function App() {
     <div className="app">
       <aside className="panel">
         <header className="brand">
-          <div className="mark" aria-hidden="true">C</div>
-          <h1>Campaign Generator</h1>
+          {/* Uses the real mark when it is present in public/, and a
+              typographic wordmark when it is not -- so the header is never
+              a broken image icon on a fresh checkout. */}
+          <img src="/logo.png" alt="" onError={(e) => { e.currentTarget.hidden = true; }} />
+          <h1>
+            Brandly<span className="ai">AI</span>
+            <span className="tag">Create. Automate. Grow.</span>
+          </h1>
           {health && (
-            <span className={`pill ${health.mock ? "mock" : "ok"}`}>
-              {health.mock ? "mock" : health.image_model || "live"}
+            <span className={`pill ${health.mock ? "warn" : "ok"}`}>
+              {health.mock ? "test mode" : health.image_model || "live"}
             </span>
           )}
         </header>
@@ -589,11 +595,13 @@ export default function App() {
               <b>{imageCalls}</b> image{imageCalls === 1 ? "" : "s"} →{" "}
               <b>{deliverables}</b> deliverable{deliverables === 1 ? "" : "s"}
             </span>
-            {usage && !usage.mock && (
+            {usage?.mock ? (
+              <span className="left">test mode, nothing is billed</span>
+            ) : usage ? (
               <span className={usage.today.remaining <= 1 ? "low" : ""}>
                 {usage.today.remaining} left today
               </span>
-            )}
+            ) : null}
           </div>
           <button className="go" onClick={generate}
                   disabled={busy || !ready || overBudget}>
@@ -603,6 +611,8 @@ export default function App() {
               ? "Not enough budget today"
               : !ready
               ? "Describe what you sell"
+              : usage?.mock
+              ? "Generate a test campaign"
               : `Generate — ${imageCalls} image${imageCalls === 1 ? "" : "s"}`}
           </button>
         </div>
