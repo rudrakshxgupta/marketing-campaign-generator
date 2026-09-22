@@ -26,12 +26,10 @@ from app.config import get_settings
 from app.copy.languages import DEFAULT_LOCALES, LOCALES
 from app.copy.fidelity import SubjectKind, detect_kind
 from app.copy.strategy import BrandKit, CreativeBrief, CreativeStrategy, NegativeSpace
-from app.foundry.budget import BudgetedImageBackend, BudgetExceeded
-from app.foundry.cache import CachingImageBackend
-from app.foundry.flux_client import FluxImageClient
-from app.foundry.image_client import MaiImageClient, MaiRateLimited
+from app.foundry.budget import BudgetExceeded
+from app.foundry.factory import build_image_backend
+from app.foundry.image_client import MaiRateLimited
 from app.copy.transcreate import FoundryCopyWriter, StubCopyWriter
-from app.foundry.mock_client import MockImageClient
 from app.foundry.text_client import FoundryTextClient
 from app.imaging.dimensions import FORMATS
 from app.imaging.overlay import OverlayRenderer
@@ -135,40 +133,6 @@ class GenerateRequest(BaseModel):
     preserve_subject: bool = True
 
 
-def build_image_backend(settings) -> tuple[object, object | None, object | None]:
-    """Compose the image backend stack.
-
-    Ordering matters and is the whole point:
-
-        cache -> budget -> client
-
-    The cache sits outermost so a repeat request is served from disk *without*
-    consuming budget. The budget guard sits above the client so a retry loop
-    cannot quietly spend a month of credits.
-
-    Returns (backend, budget, cache) so the API can report spend.
-    """
-    if settings.mock:
-        base = MockImageClient()
-    elif settings.image_backend == "flux":
-        base = FluxImageClient(settings)
-    else:
-        base = MaiImageClient(settings)
-
-    if settings.mock:
-        # No spend to guard and no benefit to caching placeholders.
-        return base, None, None
-
-    budget = BudgetedImageBackend(
-        base,
-        storage_root=settings.storage_root,
-        daily_limit=settings.daily_limit,
-        total_limit=settings.total_limit,
-    )
-    cache = CachingImageBackend(
-        budget, root=settings.cache_root, enabled=settings.cache_enabled
-    )
-    return cache, budget, cache
 
 
 @asynccontextmanager
@@ -176,7 +140,10 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
     app.state.renderer = OverlayRenderer()
-    app.state.images, app.state.budget, app.state.cache = build_image_backend(settings)
+    backend = build_image_backend(settings)
+    app.state.images = backend.images
+    app.state.budget = backend.budget
+    app.state.cache = backend.cache
 
     # Copy is written by a live model whenever one is reachable, even while
     # images are mocked. Text quota is separate from image quota and vastly

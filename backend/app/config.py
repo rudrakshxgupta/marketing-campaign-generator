@@ -138,15 +138,25 @@ class Settings:
         """FLUX lives on a different host to MAI on the same resource.
 
         MAI:  <resource>.services.ai.azure.com
-        FLUX: <resource>.api.cognitive.microsoft.com
+        FLUX: <resource>.cognitiveservices.azure.com
 
-        Derived rather than configured separately, so there is one endpoint to
-        get right instead of two that can disagree.
+        The docs give the FLUX host as ``<resource>.api.cognitive.microsoft.com``,
+        but a real AIServices resource reports ``.cognitiveservices.azure.com``
+        as its Cognitive Services endpoint and the documented form does not
+        resolve at all -- it fails as a DNS error rather than a 404, which
+        looks like a network problem rather than a wrong hostname.
+
+        So the default follows the resource, and ``FLUX_ENDPOINT`` overrides it
+        if a given tenant really does use the documented host. Check the actual
+        value with:
+
+            az cognitiveservices account show -n <name> -g <rg> \\
+                --query properties.endpoint
         """
         override = os.environ.get("FLUX_ENDPOINT", "").rstrip("/")
         if override:
             return override
-        return f"https://{self.resource_name}.api.cognitive.microsoft.com"
+        return f"https://{self.resource_name}.cognitiveservices.azure.com"
 
     @property
     def capabilities(self):

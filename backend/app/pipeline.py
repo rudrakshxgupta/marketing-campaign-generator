@@ -32,6 +32,7 @@ from app.copy.transcreate import CopyPack, CopyWriter, StubCopyWriter
 from app.foundry.image_client import ImageBackend
 from app.imaging.compose import (
     Anchor,
+    patch_luminance,
     composite_logo,
     composite_overlay,
     finalize_base,
@@ -40,7 +41,7 @@ from app.imaging.compose import (
 )
 from app.imaging.dimensions import MAI, Capabilities, plan_for
 from app.imaging.fidelity import FidelityReport, compare
-from app.imaging.overlay import FitReport, OverlayRenderer, TextBox
+from app.imaging.overlay import FitReport, OverlayRenderer, OverlayStyle, TextBox
 from app.imaging.safezones import SafeZoneViolation
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,59 @@ TEXT_BOXES: dict[str, TextBox] = {
 LOGO_ANCHORS: dict[str, Anchor] = {
     "story": "top_left",
 }
+
+#: Above this mean luminance the backdrop is light, so the copy must be dark.
+_LIGHT_BACKDROP = 0.45
+#: Below this it is dark, so the copy must be light.
+_DARK_BACKDROP = 0.18
+
+
+def style_for(base: Image.Image, box: TextBox, brand: BrandKit) -> OverlayStyle:
+    """Choose copy colour by measuring what the copy will sit on.
+
+    The logo has always picked its knockout from the background; the *text* did
+    not, and was simply always white. On a pale creative -- a cream backdrop,
+    an overexposed bokeh, a white studio sweep -- white copy on white is
+    unreadable, and it is unreadable in exactly the way that still renders and
+    still passes every size check.
+
+    So the text box is sampled first and the palette chosen from it, with a
+    scrim in the mid-tones where neither pure choice is safe.
+    """
+    region = (
+        round(base.width * box.left),
+        round(base.height * box.top),
+        round(base.width * (box.left + box.width)),
+        round(base.height * (box.top + box.height)),
+    )
+    luminance = patch_luminance(base, region)
+
+    if luminance > _LIGHT_BACKDROP:
+        # Dark ink on a light backdrop. The shadow has to become a soft light
+        # halo instead, or it reads as grime around the letters.
+        return OverlayStyle(
+            colour="#17130A",
+            cta_background=brand.primary_hex,
+            cta_foreground="#17130A",
+            shadow="0 1px 10px rgba(255,255,255,0.65)",
+        )
+
+    if luminance < _DARK_BACKDROP:
+        return OverlayStyle(
+            colour="#FFFFFF",
+            cta_background=brand.primary_hex,
+            cta_foreground="#17130A",
+            shadow="0 2px 12px rgba(0,0,0,0.45)",
+        )
+
+    # Mid-tone: neither pure white nor near-black is reliably legible, so keep
+    # white and lean on a heavier shadow to carve it out of the background.
+    return OverlayStyle(
+        colour="#FFFFFF",
+        cta_background=brand.primary_hex,
+        cta_foreground="#17130A",
+        shadow="0 2px 6px rgba(0,0,0,0.85), 0 0 22px rgba(0,0,0,0.6)",
+    )
 
 
 class CampaignPipeline:
@@ -218,6 +272,7 @@ class CampaignPipeline:
                     locale_key=locale_key,
                     format_key=format_key,
                     out_dir=out_dir,
+                    brand=brand,
                 )
                 result.variants.append(variant)
 
@@ -301,11 +356,13 @@ class CampaignPipeline:
         locale_key: str,
         format_key: str,
         out_dir: Path,
+        brand: BrandKit,
     ) -> Variant:
         copy = copy_pack[locale_key]
         locale = get_locale(locale_key)
         reasons: list[str] = []
 
+        box = TEXT_BOXES.get(format_key, TEXT_BOXES["portrait"])
         overlay_png, fit = await self._renderer.render(
             width=base.width,
             height=base.height,
@@ -314,7 +371,10 @@ class CampaignPipeline:
             subhead=copy.subhead,
             cta=copy.cta,
             headline_alternates=copy.headline_alternates,
-            box=TEXT_BOXES.get(format_key, TEXT_BOXES["portrait"]),
+            box=box,
+            # Measured against this image, not assumed. White-on-white renders
+            # perfectly and reads as nothing at all.
+            style=style_for(base, box, brand),
         )
         composed = composite_overlay(base, overlay_png)
 

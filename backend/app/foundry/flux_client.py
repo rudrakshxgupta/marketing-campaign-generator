@@ -41,8 +41,16 @@ logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
-#: Deployment id -> URL path. The docs are explicit that these differ, and
-#: getting it wrong produces a 404 that reads like a missing deployment.
+#: Model id -> URL path. The docs are explicit that these differ, and getting
+#: it wrong produces a 404 that reads like a missing deployment.
+#:
+#: There is a second, undocumented trap here. The URL carries the *path*
+#: (``flux-2-pro``), but the service resolves that back to the *model id* and
+#: then looks for a deployment named after it -- the 404 body says
+#: "The API deployment flux.2-pro does not exist", with a dot.
+#:
+#: So a deployment named ``flux-2-pro`` is never found, however correct the URL
+#: is. **Name the deployment after the model id**: ``FLUX.2-pro``.
 MODEL_PATHS = {
     "FLUX.2-pro": "flux-2-pro",
     "FLUX.2-flex": "flux-2-flex",
