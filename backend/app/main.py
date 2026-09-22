@@ -29,7 +29,7 @@ from app.copy.fidelity import SubjectKind, detect_kind
 from app.copy.strategy import BrandKit, CreativeBrief, CreativeStrategy, NegativeSpace
 from app.foundry.budget import BudgetExceeded
 from app.foundry.factory import build_image_backend
-from app.foundry.image_client import MaiRateLimited
+from app.foundry.image_client import MaiRateLimited, PromptBlocked
 from app.copy.transcreate import FoundryCopyWriter, StubCopyWriter
 from app.foundry.text_client import FoundryTextClient
 from app.imaging.dimensions import FORMATS
@@ -41,8 +41,16 @@ logger = logging.getLogger(__name__)
 
 JobState = Literal[
     "queued", "compiling", "generating", "compositing", "complete",
-    "failed", "rate_limited", "budget_exceeded",
+    "failed", "rate_limited", "budget_exceeded", "blocked",
 ]
+
+#: States a job can still move out of. Everything else is terminal.
+#:
+#: Expressed as the *running* set rather than the finished one so that adding
+#: a new way to stop cannot leave a client polling forever -- the failure mode
+#: of an allow-list of endings is a spinner that never resolves, and it shows
+#: up as "nothing appeared" rather than as an error anyone can act on.
+RUNNING_STATES = frozenset({"queued", "compiling", "generating", "compositing"})
 
 
 @dataclass
@@ -61,6 +69,9 @@ class Job:
     #: What the compiler turned the product name into, so the user can see and
     #: override it rather than wondering where the picture came from.
     brief_summary: dict | None = None
+    #: The prompt that was sent, kept even when the run failed. A refused
+    #: prompt is the one worth reading.
+    prompt: str | None = None
 
 
 JOBS: dict[str, Job] = {}
@@ -120,6 +131,15 @@ class GenerateRequest(BaseModel):
     #: N generations into one. Costs some sharpness and composition control,
     #: so it is opt-in rather than a silent default.
     economy: bool = False
+
+    # --- brand assets ------------------------------------------------------
+    #: From POST /api/uploads/logo.
+    #:
+    #: Required to get the logo you just uploaded. The previous code took
+    #: whichever ``logo_*.png`` sorted first on disk, which is stable, wrong,
+    #: and silently wrong: with two uploads in the storage directory the
+    #: campaign gets a random one of them and nothing reports a problem.
+    logo_id: str | None = None
 
     # --- reference image ---------------------------------------------------
     #: From POST /api/uploads/reference.
@@ -254,6 +274,37 @@ async def usage() -> dict:
     }
 
 
+@app.get("/api/classify")
+async def classify(product: str = "") -> dict:
+    """What kind of subject the product text describes.
+
+    Pure local keyword matching -- no model, no cost, safe to call on every
+    keystroke. It exists so the UI can warn *before* an image is spent, and
+    the warning it enables is the important one: "inspiration" mode regenerates
+    from scratch, so uploading a photo of a real building and leaving the
+    default selected produces an advertisement for a property that does not
+    exist. That is a legal exposure, and nothing in the old UI said so.
+
+    Advisory only. The pipeline runs :func:`detect_kind` again and takes the
+    stricter of its own answer and the model's.
+    """
+    from app.copy.fidelity import FIDELITY_FLOOR, SubjectKind, detect_kind
+
+    kind = detect_kind(product)
+    return {
+        "kind": kind.value,
+        "fidelity_floor": FIDELITY_FLOOR[kind],
+        # Kinds where an invented subject misrepresents something real, rather
+        # than merely looking different from what the seller had in mind.
+        "prefer_exact": kind in {
+            SubjectKind.ARCHITECTURE,
+            SubjectKind.JEWELLERY,
+            SubjectKind.VEHICLE,
+            SubjectKind.PERSON,
+        },
+    }
+
+
 @app.get("/api/meta")
 async def meta() -> dict:
     """Formats and locales, including the generation size each format needs.
@@ -345,6 +396,8 @@ async def get_job(job_id: str) -> dict:
         "error": job.error,
         "logs": job.logs[-20:],
     }
+    if job.prompt:
+        payload["prompt"] = job.prompt
     if job.result is not None:
         payload["image_calls"] = job.result.image_calls
         payload["calls_saved"] = job.result.calls_saved
@@ -362,6 +415,7 @@ async def get_job(job_id: str) -> dict:
             }
         payload["master_format"] = job.result.master_format
         payload["prompt"] = job.result.prompt
+        payload["notes"] = list(job.result.notes)
         payload["variants"] = [
             {
                 "locale": v.locale,
@@ -663,10 +717,24 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
                 else "subject preservation OFF - the subject may be redesigned"
             )
 
-        logo_path = next(
-            iter(sorted((settings.storage_root / "uploads").glob("logo_*.png"))), None
-        )
+        logo_path = None
+        if request.logo_id:
+            # Named, not guessed. The id is generated server-side and used as
+            # a single path segment, so a traversal attempt cannot escape the
+            # uploads directory.
+            candidate = (
+                settings.storage_root / "uploads" / f"logo_{request.logo_id}.png"
+            ).resolve()
+            uploads = (settings.storage_root / "uploads").resolve()
+            if str(candidate).startswith(str(uploads)) and candidate.is_file():
+                logo_path = candidate
+            else:
+                # Loud, because a silently missing logo is exactly the failure
+                # that gets noticed only after the campaign is published.
+                job.logs.append(f"logo {request.logo_id} not found - none applied")
         logo = Image.open(logo_path).convert("RGBA") if logo_path else None
+        if logo is not None:
+            job.logs.append(f"logo: {logo.width}x{logo.height}, composited from file")
 
         job.state = "generating"
         job.logs.append(
@@ -688,6 +756,10 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
             reference=reference_bytes,
             edit_instruction=request.edit_instruction,
         )
+
+        job.prompt = result.prompt
+        for note in result.notes:
+            job.logs.append(note)
 
         if result.fidelity is not None and not result.fidelity.passed:
             reason = f"subject fidelity failed: {result.fidelity.reason}"
@@ -720,9 +792,24 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
         job.state = "rate_limited"
         job.error = str(exc)
         job.logs.append("MAI is at its RPM ceiling; retry shortly")
+    except PromptBlocked as exc:
+        # Its own state because the remedy is different from every other
+        # failure: nothing is broken and nothing was billed, but a phrase in
+        # the generated brief has to change before this will ever succeed.
+        job.state = "blocked"
+        job.error = str(exc)
+        job.logs.append(
+            "the image service refused the prompt; no image was billed"
+        )
+        job.logs.append(
+            "try naming the product more plainly, or edit the brief's wording"
+        )
     except Exception as exc:  # noqa: BLE001 - surfaced to the client
         logger.exception("job %s failed", job.id)
         job.state = "failed"
         job.error = f"{type(exc).__name__}: {exc}"
     finally:
+        # Whatever happened, keep the prompt. Debugging a refusal without the
+        # text that was refused is guesswork.
+        job.prompt = job.prompt or pipeline.last_prompt or None
         await pipeline.aclose()

@@ -29,7 +29,7 @@ from app.copy.strategy import (
 )
 from app.copy.fidelity import SubjectKind
 from app.copy.transcreate import CopyPack, CopyWriter, StubCopyWriter
-from app.foundry.image_client import ImageBackend
+from app.foundry.image_client import ImageBackend, PromptBlocked
 from app.imaging.compose import (
     Anchor,
     patch_luminance,
@@ -72,6 +72,11 @@ class CampaignResult:
     fidelity: FidelityReport | None = None
     #: Which format was generated and cropped down from, in economy mode.
     master_format: str | None = None
+    #: Things the run did that the operator should know about but that are not
+    #: failures -- a prompt retried in a reduced form, most of all. Silently
+    #: recovering is worse than not recovering: the creative that comes back is
+    #: not the one that was briefed.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def review_queue(self) -> list[Variant]:
@@ -179,6 +184,11 @@ class CampaignPipeline:
         self._renderer = renderer or OverlayRenderer()
         self._writer = writer or StubCopyWriter()
         self._last_fidelity: FidelityReport | None = None
+        self._notes: list[str] = []
+        #: The prompt most recently built, kept outside the result so a run
+        #: that fails still has something to show. A refused prompt is exactly
+        #: the one worth reading, and it is the one the old code threw away.
+        self.last_prompt: str = ""
         # What the chosen image model will accept. MAI's 1 MP forces a
         # crop-and-upscale on every Instagram format; FLUX's 4 MP does not.
         self._caps = capabilities
@@ -188,6 +198,10 @@ class CampaignPipeline:
     async def aclose(self) -> None:
         if self._owns_renderer:
             await self._renderer.aclose()
+
+    def note(self, message: str) -> None:
+        """Record something the operator should see in the job log."""
+        self._notes.append(message)
 
     async def run(
         self,
@@ -206,11 +220,14 @@ class CampaignPipeline:
     ) -> CampaignResult:
         out_dir = self._storage / "renders" / campaign_id
         out_dir.mkdir(parents=True, exist_ok=True)
+        # Per run, not per instance: the pipeline outlives a single campaign.
+        self._notes = []
 
         # In economy mode the master is cropped down to every other format, so
         # the subject has to be briefed to survive losing its top and bottom.
         crop_safe = economy and len(formats) > 1
         prompt = render_prompt(brief, crop_safe=crop_safe)
+        self.last_prompt = prompt
         result = CampaignResult(
             campaign_id=campaign_id, prompt=prompt, economy=economy
         )
@@ -230,7 +247,8 @@ class CampaignPipeline:
             master_plan = plan_for(master_key, self._caps)
 
             master_png = await self._generate_base(
-                prompt, brief, master_plan, reference, reference_mime, edit_instruction
+                prompt, brief, master_plan, reference, reference_mime,
+                edit_instruction, crop_safe=crop_safe,
             )
             result.image_calls += 1
             master = finalize_base(master_png, master_plan)
@@ -252,7 +270,8 @@ class CampaignPipeline:
             for format_key in formats:
                 plan = plan_for(format_key, self._caps)
                 base_png = await self._generate_base(
-                    prompt, brief, plan, reference, reference_mime, edit_instruction
+                    prompt, brief, plan, reference, reference_mime,
+                    edit_instruction, crop_safe=crop_safe,
                 )
                 result.image_calls += 1
                 bases[format_key] = finalize_base(base_png, plan)
@@ -277,6 +296,7 @@ class CampaignPipeline:
                 result.variants.append(variant)
 
         result.fidelity = self._last_fidelity
+        result.notes = list(self._notes)
         logger.info(
             "campaign %s: %d image call(s) -> %d deliverables (%d call(s) saved)",
             campaign_id, result.image_calls, len(result.variants), result.calls_saved,
@@ -336,6 +356,8 @@ class CampaignPipeline:
         reference: bytes | None,
         reference_mime: str,
         edit_instruction: str,
+        *,
+        crop_safe: bool = False,
     ) -> bytes:
         if reference is not None:
             png, report = await self._generate_from_reference(
@@ -348,9 +370,33 @@ class CampaignPipeline:
             )
             self._last_fidelity = report
             return png
-        generated = await self._images.generate(
-            prompt=prompt, width=plan.gen_w, height=plan.gen_h
-        )
+        try:
+            generated = await self._images.generate(
+                prompt=prompt, width=plan.gen_w, height=plan.gen_h
+            )
+        except PromptBlocked:
+            # A blocklist refusal is not billed, so one retry is free -- and
+            # the clause that most often causes it is the one the brief wrote
+            # to *prevent* a problem. See render_prompt's docstring.
+            if not brief.must_not_depict:
+                raise
+            retry = render_prompt(
+                brief, crop_safe=crop_safe, omit_authored_prohibitions=True
+            )
+            if retry == prompt:
+                raise
+            logger.warning(
+                "prompt refused; retrying without %d authored prohibition(s)",
+                len(brief.must_not_depict),
+            )
+            self.last_prompt = retry
+            self.note(
+                "the service refused the first prompt; retried without the "
+                "brief's own 'do not show' list (no image was billed)"
+            )
+            generated = await self._images.generate(
+                prompt=retry, width=plan.gen_w, height=plan.gen_h
+            )
         return generated.png
 
     async def _generate_from_reference(

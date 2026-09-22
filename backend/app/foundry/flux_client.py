@@ -29,12 +29,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
+import re
 
 import httpx
 
 from app.config import Settings
-from app.foundry.image_client import ImageResult, MaiError, MaiRateLimited
+from app.foundry.image_client import (
+    ImageResult,
+    MaiError,
+    MaiRateLimited,
+    PromptBlocked,
+)
 from app.foundry.ratelimit import TokenBucket, backoff_delay
 
 logger = logging.getLogger(__name__)
@@ -149,6 +156,9 @@ class FluxImageClient:
             detail = response.text[:400]
 
             if response.status_code not in RETRYABLE_STATUSES:
+                blocked = _as_block(response.status_code, detail)
+                if blocked is not None:
+                    raise blocked
                 raise MaiError(_explain(response.status_code, detail),
                                status=response.status_code)
             if response.status_code == 429:
@@ -253,6 +263,55 @@ def _retry_after(response: httpx.Response) -> float | None:
         return float(raw) if raw else None
     except ValueError:
         return None
+
+
+#: Substrings that identify a content-policy refusal rather than a malformed
+#: request. The service returns both as plain 400s, which is why they have to
+#: be told apart by body and not by status.
+_BLOCK_MARKERS = (
+    "content_safety_violation",
+    "rai policy",
+    "blocklist",
+    "content_filter",
+    "responsibleaipolicyviolation",
+)
+
+
+def _as_block(status: int, detail: str) -> PromptBlocked | None:
+    """Recognise a content-policy refusal inside a 400.
+
+    Worth the parsing: reported as a generic 400 this reads as "check
+    width/height", which sends whoever is debugging it to the one part of the
+    request that is provably correct.
+    """
+    if status not in (400, 403, 422):
+        return None
+    lowered = detail.lower()
+    if not any(marker in lowered for marker in _BLOCK_MARKERS):
+        return None
+
+    code, policy = "", ""
+    try:
+        body = json.loads(detail)
+        error = body.get("error", body)
+        if isinstance(error, dict):
+            code = str(error.get("code", ""))
+            message = str(error.get("message", ""))
+            # e.g. "... blocking criteria (BingBlockList_Prompt)."
+            match = re.search(r"\(([A-Za-z0-9_]+)\)", message)
+            if match:
+                policy = match.group(1)
+    except (json.JSONDecodeError, AttributeError):
+        # Truncated at 400 chars, so a partial body is expected and fine --
+        # the markers already established what this is.
+        pass
+
+    named = f" [{policy}]" if policy else ""
+    return PromptBlocked(
+        f"the image service refused the prompt on content-policy "
+        f"grounds{named}. Nothing was generated and nothing was billed.",
+        status=status, code=code or "content_safety_violation", policy=policy,
+    )
 
 
 def _explain(status: int, detail: str) -> str:

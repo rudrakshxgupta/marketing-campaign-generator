@@ -85,18 +85,47 @@ def contrast_ratio(a: tuple[float, float, float], b: tuple[float, float, float])
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def patch_luminance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
-    """Mean relative luminance of a region, used to choose the logo variant."""
+def _patch_luminances(
+    image: Image.Image, box: tuple[int, int, int, int]
+) -> list[float]:
     patch = image.crop(box).convert("RGB")
-    # Downsample before averaging; we want the perceived tone of the area, not
-    # a pixel-exact statistic.
+    # Downsample before measuring; we want the perceived tone of the area, not
+    # a pixel-exact statistic. BOX averaging is what makes a single bright
+    # speck stop mattering while a bright *region* still does.
     patch = patch.resize((16, 16), Image.BOX)
     raw = patch.tobytes()
-    total = sum(
+    return [
         relative_luminance((raw[i], raw[i + 1], raw[i + 2]))
         for i in range(0, len(raw), 3)
-    )
-    return total / (len(raw) // 3)
+    ]
+
+
+def patch_luminance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """Mean relative luminance of a region, used to report what was behind."""
+    values = _patch_luminances(image, box)
+    return sum(values) / len(values)
+
+
+def patch_extremes(
+    image: Image.Image, box: tuple[int, int, int, int], *, tail: float = 0.1
+) -> tuple[float, float]:
+    """The dark and bright ends of a region, ignoring the extreme tails.
+
+    The mean is the wrong statistic for choosing ink, and it fails in the
+    direction that hurts. A real placement here measured a mean luminance of
+    0.14 -- comfortably "dark", so white was chosen and scored 5.46:1 against
+    it. The patch actually ran from grey 0 to grey 234: the mark was white on
+    near-white concrete for a third of its width, and the 5.46 was computed
+    against a tone that appeared nowhere in the image.
+
+    Contrast has to hold everywhere the mark sits, so both ends are returned
+    and the caller scores against whichever one is hostile to its ink. The
+    tails are trimmed so one stray pixel cannot force a scrim onto an
+    otherwise clean background.
+    """
+    values = sorted(_patch_luminances(image, box))
+    index = max(0, min(len(values) - 1, round(len(values) * tail)))
+    return values[index], values[len(values) - 1 - index]
 
 
 # --------------------------------------------------------------------------
@@ -112,13 +141,38 @@ class LogoPlacement:
     contrast: float
 
 
+def trim_to_ink(logo: Image.Image, *, threshold: int = 8) -> Image.Image:
+    """Crop a logo to its visible mark, discarding transparent margin.
+
+    Exported brand assets routinely carry a large transparent border -- one
+    real upload here was 1536x1024 with the mark filling 67% of the width and
+    8.5% of the pixels. Sizing the placement from the *file* rather than the
+    mark then silently shrinks the brand by a third, and it reads on the
+    finished creative as "the logo didn't work", not as a sizing bug.
+
+    Trimming first makes ``width_pct`` mean what it says regardless of how the
+    file was exported.
+    """
+    logo = logo.convert("RGBA")
+    alpha = logo.getchannel("A")
+    # point() rather than a raw getbbox() so near-transparent halo pixels --
+    # normal around antialiased edges -- do not count as ink and defeat the
+    # trim entirely.
+    box = alpha.point(lambda v: 255 if v > threshold else 0).getbbox()
+    if box is None:
+        # Fully transparent. Nothing to trim to, and cropping to an empty box
+        # would raise; let the caller deal with an invisible logo.
+        return logo
+    return logo.crop(box)
+
+
 def derive_variants(logo: Image.Image) -> dict[str, Image.Image]:
     """Original plus knockout mono versions.
 
     Most brands supply one file. A white and a black knockout cover the cases
     where the original would disappear into the background.
     """
-    logo = logo.convert("RGBA")
+    logo = trim_to_ink(logo)
     alpha = logo.getchannel("A")
 
     def knockout(colour: tuple[int, int, int]) -> Image.Image:
@@ -178,17 +232,25 @@ def choose_variant(
 ) -> tuple[str, float, float]:
     """Pick the logo variant with the best contrast against what is behind it.
 
+    Scored against the worst tone the mark actually lands on rather than the
+    patch average -- see :func:`patch_extremes` for why the average is not
+    merely imprecise but wrong in the direction that produces invisible logos.
+
     Returns (variant name, scrim alpha, achieved contrast).
     """
-    luminance = patch_luminance(base, box)
-    background = _luminance_to_rgb(luminance)
+    darkest, brightest = patch_extremes(base, box)
 
     candidates = {
         "dark": (17, 17, 17),
         "light": (255, 255, 255),
     }
+    # White ink is threatened by the bright end, black ink by the dark end.
+    hostile = {
+        "light": _luminance_to_rgb(brightest),
+        "dark": _luminance_to_rgb(darkest),
+    }
     scored = {
-        name: contrast_ratio(ink, background) for name, ink in candidates.items()
+        name: contrast_ratio(ink, hostile[name]) for name, ink in candidates.items()
     }
     variant = max(scored, key=scored.__getitem__)
     achieved = scored[variant]
@@ -201,9 +263,9 @@ def choose_variant(
     # most brand guidelines forbid on the mark itself.
     for alpha in (0.35, 0.5, 0.65, 0.8):
         if variant == "light":
-            scrimmed = _blend(background, (0, 0, 0), alpha)
+            scrimmed = _blend(hostile["light"], (0, 0, 0), alpha)
         else:
-            scrimmed = _blend(background, (255, 255, 255), alpha)
+            scrimmed = _blend(hostile["dark"], (255, 255, 255), alpha)
         achieved = contrast_ratio(candidates[variant], scrimmed)
         if achieved >= MIN_CONTRAST:
             return variant, alpha, achieved

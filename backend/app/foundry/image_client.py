@@ -51,6 +51,32 @@ class MaiRateLimited(MaiError):
     """Retries were exhausted while the deployment kept returning 429."""
 
 
+class PromptBlocked(MaiError):
+    """The service refused the prompt on content-policy grounds.
+
+    Distinct from a generic 400 because the two need opposite responses. A
+    malformed request is our bug and retrying it unchanged is pointless; a
+    blocked prompt is a *text* problem, is not billed, and is often fixed by
+    removing one phrase.
+
+    The trap it exists for: Azure's prompt blocklist matches terms, not
+    meaning, so it has no concept of negation. A prompt that says "no Nike
+    swoosh" -- exactly the sort of clause a careful brief writes, and exactly
+    what our own ``must_not_depict`` field invites a model to produce -- reads
+    to the filter as a prompt containing a trademark. The fix is to drop the
+    clause, which is safe precisely because the thing it forbade was never
+    going to be drawn.
+    """
+
+    def __init__(self, message: str, *, status: int | None = None,
+                 code: str = "", policy: str = "") -> None:
+        super().__init__(message, status=status)
+        #: The service's own error code, e.g. ``content_safety_violation``.
+        self.code = code
+        #: Which list fired, when the service names one.
+        self.policy = policy
+
+
 @dataclass(frozen=True)
 class ImageResult:
     png: bytes

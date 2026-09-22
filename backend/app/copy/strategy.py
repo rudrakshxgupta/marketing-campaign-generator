@@ -147,7 +147,12 @@ _FILL_PHRASE = {
 }
 
 
-def render_prompt(brief: CreativeBrief, *, crop_safe: bool = False) -> str:
+def render_prompt(
+    brief: CreativeBrief,
+    *,
+    crop_safe: bool = False,
+    omit_authored_prohibitions: bool = False,
+) -> str:
     """Turn a CreativeBrief into an English MAI prompt.
 
     MAI-Image-2.6 declares English as its only supported language, so the
@@ -157,6 +162,15 @@ def render_prompt(brief: CreativeBrief, *, crop_safe: bool = False) -> str:
     every other format. The subject then has to survive having its top and
     bottom removed, so the prompt asks for it to be centred with margin --
     otherwise the square crop decapitates it.
+
+    ``omit_authored_prohibitions`` drops the model-written ``must_not_depict``
+    entries while keeping every clause this module owns. It exists for one
+    recovery: a prompt blocklist matches terms and cannot read negation, so a
+    brief that carefully says "no third-party sportswear logo" can be refused
+    for naming the thing it is ruling out. Removing those entries is safe --
+    nothing asked for them in the first place -- and leaves the no-text and
+    reserved-space clauses, which are the two the pipeline actually depends on,
+    untouched.
     """
     space = brief.negative_space
     parts = [
@@ -197,7 +211,8 @@ def render_prompt(brief: CreativeBrief, *, crop_safe: bool = False) -> str:
 
     parts.append(NO_TEXT_CLAUSE)
 
-    prohibited = tuple(brief.must_not_depict) + GLOBAL_PROHIBITIONS
+    authored = () if omit_authored_prohibitions else tuple(brief.must_not_depict)
+    prohibited = authored + GLOBAL_PROHIBITIONS
     parts.append(
         "The frame contains " + ", ".join(f"no {item}" for item in prohibited) + "."
     )

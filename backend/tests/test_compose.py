@@ -17,8 +17,10 @@ from app.imaging.compose import (
     derive_variants,
     finalize_base,
     logo_box,
+    patch_extremes,
     patch_luminance,
     relative_luminance,
+    trim_to_ink,
 )
 from app.imaging.dimensions import FORMATS, plan_for
 from app.imaging.safezones import (
@@ -107,12 +109,73 @@ def test_the_narrow_band_where_neither_knockout_works_triggers_a_scrim(
     assert achieved >= MIN_CONTRAST
 
 
+def test_a_busy_background_gets_a_scrim_rather_than_a_flattering_average(
+    logo: Image.Image,
+) -> None:
+    """The bug that put a white logo on near-white concrete.
+
+    Half dark bench, half bright pavement. The mean reads as "dark", which
+    picks white ink and scores it against a grey that exists nowhere in the
+    patch -- so the mark passes the gate and then vanishes over the bright
+    half. Contrast has to hold where the mark actually sits.
+    """
+    base = Image.new("RGB", (200, 60), (10, 10, 10))
+    base.paste(Image.new("RGB", (100, 60), (234, 234, 234)), (100, 0))
+
+    variant, scrim, achieved = choose_variant(base, (0, 0, 200, 60), derive_variants(logo))
+    assert scrim > 0.0, "a two-tone background cannot be safe for either ink"
+    assert achieved >= MIN_CONTRAST
+
+
+def test_extremes_bracket_the_mean() -> None:
+    base = Image.new("RGB", (200, 60), (10, 10, 10))
+    base.paste(Image.new("RGB", (100, 60), (240, 240, 240)), (100, 0))
+
+    darkest, brightest = patch_extremes(base, (0, 0, 200, 60))
+    mean = patch_luminance(base, (0, 0, 200, 60))
+    assert darkest < mean < brightest
+    # A single stray pixel must not drag the bracket open, or every clean
+    # background would acquire a scrim it does not need.
+    flat_grey = flat((128, 128, 128), (200, 60))
+    flat_grey.putpixel((0, 0), (255, 255, 255))
+    low, high = patch_extremes(flat_grey, (0, 0, 200, 60))
+    assert high - low < 0.05
+
+
 def test_derive_variants_preserves_the_alpha_mask(logo: Image.Image) -> None:
     variants = derive_variants(logo)
     assert set(variants) == {"original", "light", "dark"}
-    source_alpha = logo.convert("RGBA").getchannel("A").tobytes()
-    for name in ("light", "dark"):
+    # Against the trimmed mark: derivation crops transparent margin first, so
+    # every variant shares that geometry rather than the source file's.
+    source_alpha = trim_to_ink(logo).getchannel("A").tobytes()
+    for name in ("original", "light", "dark"):
         assert variants[name].getchannel("A").tobytes() == source_alpha
+
+
+def test_transparent_margin_does_not_shrink_the_mark() -> None:
+    """A brand asset exported with padding must not render smaller.
+
+    This is not hypothetical: an uploaded logo here was 1536x1024 with the
+    mark filling 67% of the width. Sizing from the file rather than the mark
+    put out a brand a third smaller than asked for, and it reads on the
+    creative as "the logo didn't work" rather than as a sizing bug.
+    """
+    mark = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    for x in range(80, 120):
+        for y in range(80, 120):
+            mark.putpixel((x, y), (220, 40, 60, 255))
+
+    padded = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    padded.paste(mark, (400, 400))
+
+    tight = derive_variants(mark)["original"]
+    loose = derive_variants(padded)["original"]
+    assert tight.size == loose.size == (40, 40)
+
+
+def test_a_fully_transparent_logo_does_not_crash_the_trim() -> None:
+    empty = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    assert trim_to_ink(empty).size == (64, 64)
 
 
 # --------------------------------------------------------------------------

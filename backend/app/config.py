@@ -7,11 +7,47 @@ boots and the whole pipeline runs in mock mode on a clean checkout.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BACKEND_ROOT.parent
+
+
+def _load_dotenv(path: Path = PROJECT_ROOT / ".env") -> None:
+    """Read ``.env`` into the environment, without overriding what is set.
+
+    The file already existed, was documented, was gitignored -- and nothing
+    read it. Settings came from ``os.environ`` alone, so the app ran in mock
+    mode against MAI whenever it was launched from a shell that happened not
+    to have the variables exported, while a ``.env`` sitting next to it said
+    FLUX and live. A config file that silently does nothing is worse than no
+    config file.
+
+    Real environment variables win, so a deliberate ``MAI_MOCK=1 uvicorn ...``
+    still overrides the file.
+
+    Never under pytest. The file names a live deployment and turns mock mode
+    off, so loading it would point the suite at a real, billed, rate-limited
+    image model -- 194 tests against a 5-a-day quota. A test run must not be
+    able to spend anything, and the safe default has to be structural rather
+    than a variable somebody remembers to export.
+    """
+    if "pytest" in sys.modules:
+        return
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name, value = name.strip(), value.strip().strip('"').strip("'")
+        os.environ.setdefault(name, value)
+
+
+_load_dotenv()
 
 
 def _flag(name: str, default: bool) -> bool:

@@ -1,214 +1,481 @@
+/* Campaign Generator.
+ *
+ * Light chrome, dark stage. The tool is paper; the canvas behind the
+ * creatives is a lightbox. Photographs need a dark surround to be judged
+ * honestly, and the people using this are shop owners rather than retouchers,
+ * so the controls stay in daylight.
+ *
+ * Indigo and marigold rather than a neutral grey: this is a tool for Indian
+ * marketers and the palette comes from the print and textile vernacular its
+ * audience already reads. Marigold appears in exactly two places -- what an
+ * action will spend, and the button that spends it -- so the one saturated
+ * colour in the interface always means the same thing.
+ *
+ * The language selector is the one place the design raises its voice, because
+ * the scripts are the product: each language names itself in its own
+ * letterforms, at a size where the shapes are legible as shapes.
+ */
+
 :root {
-  --bg: #0e0f13;
-  --panel: #171920;
-  --panel-2: #1e212a;
-  --line: #2a2e3a;
-  --text: #e8eaf0;
-  --muted: #9aa0b0;
-  --accent: #d4a03c;
-  --accent-dim: #8a6a28;
-  --ok: #4ba36a;
-  --warn: #d9a441;
-  --bad: #d4605a;
-  --radius: 10px;
+  --paper: #fbfaf8;
+  --paper-2: #f3f1ec;
+  --stone: #e2ded6;
+  --stone-2: #cfcabf;
+
+  --ink: #16202e;
+  --ink-2: #4d5a6c;
+  --ink-3: #8b95a3;
+
+  --indigo: #27407a;
+  --indigo-soft: rgba(39, 64, 122, 0.08);
+  --marigold: #c98209;
+  --marigold-soft: rgba(232, 163, 23, 0.14);
+
+  --stage: #171a21;
+  --stage-2: #1f232c;
+  --stage-line: #2c323d;
+  --stage-text: #e8e9ec;
+  --stage-text-2: #979ead;
+
+  --ok: #2f7d4f;
+  --bad: #b3352e;
+
+  --r: 8px;
+  --r-lg: 12px;
+  --panel-w: 388px;
 }
 
 * { box-sizing: border-box; }
+html, body, #root { height: 100%; }
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 14px/1.5 "Inter", "Segoe UI", system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px/1.55 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Indic scripts need more leading than Latin, and must never be tracked --
-   positive letter-spacing pulls shaped clusters apart and breaks conjuncts.
-   Same rule the server-side renderer enforces. */
-[lang="hi-IN"], [lang="mr-IN"], [lang="bn-IN"], [lang="ta-IN"], [lang="te-IN"] {
-  line-height: 1.5;
-  letter-spacing: 0;
-  font-synthesis: none;
+/* Indic scripts need more leading than Latin and must never be tracked:
+   positive letter-spacing detaches matras and breaks conjuncts. */
+:lang(hi), :lang(mr), :lang(bn), :lang(ta), :lang(te) {
+  letter-spacing: 0 !important;
+  line-height: 1.7;
 }
 
-.app { display: grid; grid-template-columns: 380px 1fr; min-height: 100vh; }
+button, input, textarea, select { font: inherit; color: inherit; }
+
+:where(a, button, input, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------- shell */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--panel-w) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
 
 .panel {
-  background: var(--panel);
-  border-right: 1px solid var(--line);
-  padding: 20px;
-  overflow-y: auto;
-  max-height: 100vh;
+  background: var(--paper);
+  border-right: 1px solid var(--stone);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.stage { padding: 24px; overflow-y: auto; max-height: 100vh; }
+.panel-scroll { overflow-y: auto; padding: 28px; flex: 1; min-height: 0; }
 
-h1 { font-size: 17px; margin: 0 0 2px; letter-spacing: -0.2px; }
-h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;
-     color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
-.sub { color: var(--muted); font-size: 12px; margin: 0 0 18px; }
-
-label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
-
-input[type="text"], textarea, select {
-  width: 100%; background: var(--panel-2); color: var(--text);
-  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px;
-  font: inherit; outline: none;
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 22px 28px 18px;
+  border-bottom: 1px solid var(--stone);
 }
-input:focus, textarea:focus, select:focus { border-color: var(--accent-dim); }
-textarea { resize: vertical; min-height: 68px; }
-
-.row { display: flex; gap: 8px; }
-.row > * { flex: 1; }
-
-button {
-  background: var(--accent); color: #17130a; border: 0; border-radius: 8px;
-  padding: 11px 14px; font: inherit; font-weight: 650; cursor: pointer; width: 100%;
+.brand h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.4px;
+  flex: 1;
 }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
-button.ghost {
-  background: transparent; color: var(--text); border: 1px solid var(--line);
-  font-weight: 500; padding: 7px 10px; width: auto;
-}
-button.ghost.on { border-color: var(--accent); color: var(--accent); }
+.brand p { margin: 2px 0 0; font-size: 12px; color: var(--ink-3); }
 
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill {
+  font-size: 11px;
+  font-weight: 550;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--stone-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.pill.ok { color: var(--ok); border-color: rgba(47, 125, 79, 0.35); }
+.pill.warn { color: var(--marigold); border-color: rgba(201, 130, 9, 0.4); }
+
+/* ------------------------------------------------------------- sections */
+
+/* A rule and a heading, no eyebrow and no numbering: the fields are all
+   visible at once, so calling them steps would claim a sequence that the
+   form does not actually have. */
+.step { padding-bottom: 26px; margin-bottom: 26px; border-bottom: 1px solid var(--stone); }
+.step:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+
+.step > h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  margin: 0 0 4px;
+}
+.step > h2 .opt { font-weight: 400; color: var(--ink-3); font-size: 13px; }
+.step > .lede { margin: 0 0 14px; font-size: 12.5px; color: var(--ink-2); max-width: 46ch; }
+
+label { display: block; font-size: 12.5px; color: var(--ink-2); margin: 0 0 5px; }
+label .sub { color: var(--ink-3); }
+
+input[type="text"], textarea {
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--stone-2);
+  border-radius: var(--r);
+  color: var(--ink);
+  padding: 9px 11px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+input[type="text"]:hover, textarea:hover { border-color: var(--ink-3); }
+input[type="text"]:focus, textarea:focus {
+  border-color: var(--indigo);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--indigo-soft);
+}
+textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
+::placeholder { color: var(--ink-3); }
+
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.hint { font-size: 12px; color: var(--ink-3); line-height: 1.5; margin-top: 7px; max-width: 46ch; }
+.hint b { color: var(--ink-2); font-weight: 600; }
+
+/* --------------------------------------------------------------- chips */
+
+.chips { display: flex; flex-wrap: wrap; gap: 7px; }
+
 .chip {
-  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
-  border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer;
-  user-select: none;
+  appearance: none;
+  background: #fff;
+  border: 1px solid var(--stone-2);
+  border-radius: var(--r);
+  color: var(--ink-2);
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
-.chip.on { border-color: var(--accent); color: var(--accent); background: #241d10; }
-.chip .native { opacity: 0.65; margin-left: 5px; }
+.chip:hover { border-color: var(--ink-3); color: var(--ink); }
+.chip[aria-pressed="true"] {
+  background: var(--indigo);
+  border-color: var(--indigo);
+  color: #fff;
+}
 
-.hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
-.hint b { color: var(--text); font-weight: 600; }
+/* The one place the design raises its voice. Each language names itself in
+   its own letterforms at a size where the shapes read as shapes -- because
+   getting those shapes right is the entire product. */
+.langs { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+
+.lang {
+  appearance: none;
+  background: #fff;
+  border: 1px solid var(--stone-2);
+  border-radius: var(--r);
+  padding: 10px 11px 9px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.lang:hover { border-color: var(--ink-3); }
+.lang[aria-pressed="true"] {
+  border-color: var(--indigo);
+  background: var(--indigo-soft);
+}
+.lang .native {
+  display: block;
+  font-size: 19px;
+  line-height: 1.35;
+  color: var(--ink);
+  margin-bottom: 1px;
+}
+.lang .name { display: block; font-size: 11.5px; color: var(--ink-3); }
+.lang[aria-pressed="true"] .name { color: var(--indigo); font-weight: 550; }
+
+/* ------------------------------------------------------------- uploads */
+
+.drop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: #fff;
+  border: 1px dashed var(--stone-2);
+  border-radius: var(--r);
+  padding: 11px;
+  transition: border-color 0.12s ease;
+}
+.drop:hover { border-color: var(--indigo); }
+.drop.filled { border-style: solid; }
+.drop-thumb {
+  width: 40px; height: 40px; flex: none;
+  border-radius: 6px;
+  background: var(--paper-2) center/contain no-repeat;
+  border: 1px solid var(--stone);
+}
+.drop-pick {
+  appearance: none; background: none; border: 0; padding: 0;
+  text-align: left; cursor: pointer; flex: 1; min-width: 0;
+}
+.drop-pick strong {
+  display: block; font-size: 13px; font-weight: 550; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.drop-pick span { font-size: 11.5px; color: var(--ink-3); }
+.drop-clear {
+  appearance: none; background: none; border: 0; cursor: pointer;
+  color: var(--ink-3); font-size: 17px; line-height: 1; padding: 4px 6px;
+  border-radius: 4px;
+}
+.drop-clear:hover { color: var(--bad); background: var(--paper-2); }
+
+/* -------------------------------------------------- reference mode cards */
+
+/* The most consequential control in the form, so it is the largest. As a
+   pair of small toggles it was routinely missed, and the default quietly
+   regenerated a photograph of a real building into an invented one. */
+.modes { display: grid; gap: 8px; margin-top: 14px; }
+
+.mode {
+  appearance: none;
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--stone-2);
+  border-radius: var(--r);
+  padding: 13px;
+  cursor: pointer;
+  color: var(--ink-2);
+  display: grid;
+  grid-template-columns: 15px 1fr;
+  gap: 11px;
+  align-items: start;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.mode:hover { border-color: var(--ink-3); }
+.mode[aria-pressed="true"] { border-color: var(--indigo); background: var(--indigo-soft); }
+.mode .dot {
+  width: 14px; height: 14px; margin-top: 2px;
+  border-radius: 50%; border: 1.5px solid var(--stone-2); background: #fff;
+}
+.mode[aria-pressed="true"] .dot {
+  border-color: var(--indigo);
+  box-shadow: inset 0 0 0 3px var(--indigo);
+}
+.mode strong { display: block; color: var(--ink); font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
+.mode .body { font-size: 12px; line-height: 1.5; display: block; }
+.mode .rec {
+  margin-left: 7px; font-size: 11px; font-weight: 600;
+  color: var(--marigold); vertical-align: 1px;
+}
+
+/* ---------------------------------------------------------------- notes */
 
 .note {
-  border-left: 2px solid var(--accent-dim); padding: 8px 10px; margin: 10px 0;
-  background: #1a1710; font-size: 11.5px; color: var(--muted); border-radius: 0 6px 6px 0;
+  border-left: 2px solid var(--stone-2);
+  background: var(--paper-2);
+  padding: 9px 12px;
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  border-radius: 0 var(--r) var(--r) 0;
+  line-height: 1.5;
 }
-.note.bad { border-color: var(--bad); background: #1e1414; }
+.note.warn { border-color: var(--marigold); background: var(--marigold-soft); }
+.note.bad { border-color: var(--bad); background: rgba(179, 53, 46, 0.07); }
 
-.cost {
-  display: flex; justify-content: space-between; align-items: center;
-  background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 8px; padding: 9px 11px; margin: 12px 0; font-size: 12px;
+.check { display: flex; align-items: flex-start; gap: 9px; color: var(--ink); font-size: 13px; margin: 0; cursor: pointer; }
+.check input { margin: 3px 0 0; accent-color: var(--indigo); flex: none; }
+
+/* --------------------------------------------------------------- action */
+
+/* Pinned, so the cost of the next click is visible without scrolling back. */
+.action { border-top: 1px solid var(--stone); padding: 14px 28px 20px; background: var(--paper-2); flex: none; }
+
+.cost { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; color: var(--ink-2); margin-bottom: 9px; }
+.cost b { color: var(--marigold); font-weight: 650; font-variant-numeric: tabular-nums; }
+.cost .left { color: var(--ink-3); }
+.cost .low { color: var(--bad); font-weight: 600; }
+
+.go {
+  appearance: none; width: 100%; cursor: pointer;
+  background: var(--ink); color: var(--paper);
+  border: 0; border-radius: var(--r);
+  padding: 12px 14px; font-size: 14px; font-weight: 600;
+  transition: background 0.12s ease;
 }
-.cost b { color: var(--accent); font-size: 15px; }
+.go:hover:not(:disabled) { background: var(--indigo); }
+.go:disabled { background: var(--stone-2); color: #fff; cursor: not-allowed; }
 
-/* --- phone frame ------------------------------------------------------- */
-.frames { display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-start; }
-
-.phone {
-  width: 300px; background: #000; border-radius: 26px; padding: 8px;
-  border: 1px solid #2c2c33;
+.ghost {
+  appearance: none; cursor: pointer;
+  background: var(--stage-2); color: var(--stage-text-2);
+  border: 1px solid var(--stage-line); border-radius: var(--r);
+  padding: 7px 13px; font-size: 12.5px; text-decoration: none;
 }
-.screen { position: relative; border-radius: 19px; overflow: hidden; background: #111; }
+.ghost:hover { color: var(--stage-text); border-color: var(--stage-text-2); }
+
+/* ---------------------------------------------------------------- stage */
+
+.stage {
+  background: var(--stage);
+  color: var(--stage-text);
+  overflow-y: auto;
+  padding: 24px 28px 48px;
+  min-height: 0;
+}
+
+.stage-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; flex-wrap: wrap; min-height: 30px; }
+.stage-bar .spacer { flex: 1; }
+.stage-bar .pill { border-color: var(--stage-line); color: var(--stage-text-2); }
+.stage-bar .pill.ok { color: #6ec28d; border-color: rgba(110, 194, 141, 0.4); }
+.stage-bar .pill.warn { color: #e0ae4e; border-color: rgba(224, 174, 78, 0.4); }
+
+.toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--stage-text-2); cursor: pointer; margin: 0; }
+.toggle input { accent-color: var(--marigold); margin: 0; }
+
+.empty {
+  color: var(--stage-text-2);
+  border: 1px dashed var(--stage-line);
+  border-radius: var(--r-lg);
+  padding: 56px 32px;
+  text-align: center;
+  max-width: 480px;
+  margin: 10vh auto 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.bar { height: 2px; background: var(--stage-line); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--marigold); transition: width 0.3s ease; }
+
+.working { max-width: 420px; margin: 12vh auto 0; text-align: center; }
+.working .bar { margin-bottom: 18px; }
+.working p { color: var(--stage-text); font-size: 14px; margin: 0 0 6px; }
+.working .detail { color: var(--stage-text-2); font-size: 12px; }
+
+/* "Nothing yet" and "this failed" must not look alike: the second needs an
+   action from whoever is reading it. */
+.failed-card {
+  max-width: 560px; margin: 8vh auto 0;
+  background: var(--stage-2); border: 1px solid var(--stage-line);
+  border-left: 3px solid #d0655d; border-radius: var(--r-lg);
+  padding: 26px;
+}
+.failed-card h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.failed-card p { margin: 0 0 16px; color: var(--stage-text-2); font-size: 13px; line-height: 1.6; }
+.failed-card summary { cursor: pointer; font-size: 12px; color: var(--stage-text-2); user-select: none; padding: 3px 0; }
+
+.why {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px; color: var(--stage-text-2); background: var(--stage);
+  border: 1px solid var(--stage-line); border-radius: var(--r); padding: 12px;
+  white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0;
+  max-height: 240px; overflow-y: auto;
+}
+
+/* --------------------------------------------------------- brief readout */
+
+.brief {
+  background: var(--stage-2); border: 1px solid var(--stage-line);
+  border-radius: var(--r-lg); padding: 18px 20px; margin-bottom: 26px;
+}
+.brief h3 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--stage-text); }
+.brief dl { margin: 0; display: grid; grid-template-columns: 116px 1fr; gap: 7px 18px; font-size: 13px; }
+.brief dt { color: var(--stage-text-2); }
+.brief dd { margin: 0; color: var(--stage-text); }
+.brief .note { background: rgba(224, 174, 78, 0.1); border-color: #e0ae4e; color: var(--stage-text-2); }
+
+/* ---------------------------------------------------------------- frames */
+
+.frames { display: grid; grid-template-columns: repeat(auto-fill, minmax(296px, 1fr)); gap: 24px; align-items: start; }
+
+.card { background: var(--stage-2); border: 1px solid var(--stage-line); border-radius: var(--r-lg); overflow: hidden; }
+.card-head { display: flex; align-items: baseline; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--stage-line); }
+.card-head .who { font-size: 13.5px; font-weight: 600; }
+.card-head .what { margin-left: auto; font-size: 11.5px; color: var(--stage-text-2); font-variant-numeric: tabular-nums; }
+
+.phone { padding: 14px; }
+.screen { position: relative; border-radius: var(--r); overflow: hidden; background: #0d0f13; }
 .screen img { display: block; width: 100%; }
 
 /* Meta unified the 9:16 safe zone in March 2026: top 14%, bottom 35% for
    Reels, 6% each side. Drawn to scale so the layout can be judged honestly. */
-.safe {
-  position: absolute; inset: 0; pointer-events: none;
-  border: 1px dashed rgba(255, 90, 140, 0.85);
-}
+.safe { position: absolute; inset: 0; pointer-events: none; border: 1px dashed rgba(255, 96, 142, 0.9); }
 .unsafe {
   position: absolute; left: 0; right: 0; pointer-events: none;
-  background: repeating-linear-gradient(45deg,
-    rgba(255,60,110,0.13) 0 7px, transparent 7px 14px);
+  background: repeating-linear-gradient(45deg, rgba(255, 96, 142, 0.14) 0 6px, transparent 6px 12px);
 }
 .safe-label {
-  position: absolute; font-size: 9px; color: rgba(255,120,160,0.95);
-  background: rgba(0,0,0,0.55); padding: 1px 5px; border-radius: 3px;
+  position: absolute; font-size: 9.5px; color: #ffd2df;
+  background: rgba(0, 0, 0, 0.62); padding: 2px 5px; border-radius: 3px;
+  pointer-events: none; max-width: 92%;
 }
 
-.caption {
-  background: var(--panel); border: 1px solid var(--line); border-top: 0;
-  border-radius: 0 0 var(--radius) var(--radius); padding: 11px 13px;
-  width: 300px; font-size: 12.5px; white-space: pre-wrap;
-}
-.caption .tags { color: #6f9fd8; margin-top: 7px; font-size: 11.5px; }
+.caption { padding: 12px 16px; font-size: 13px; color: var(--stage-text-2); border-top: 1px solid var(--stage-line); line-height: 1.55; }
+.caption .tags { color: #e0ae4e; margin-top: 4px; font-size: 12px; }
 
-.frame-head {
-  display: flex; justify-content: space-between; align-items: baseline;
-  width: 300px; margin-bottom: 7px;
-}
-.frame-head .who { font-weight: 600; font-size: 13px; }
-.frame-head .what { color: var(--muted); font-size: 11px; }
+.flag { font-size: 12px; color: #e0ae4e; padding: 9px 16px 12px; border-top: 1px solid var(--stage-line); }
 
-.review {
-  font-size: 11px; color: var(--warn); margin-top: 7px;
-  border-left: 2px solid var(--warn); padding-left: 8px;
-}
+/* ---------------------------------------------------------- review panel */
 
-.empty {
-  color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius);
-  padding: 44px; text-align: center; max-width: 620px;
+.review-panel { border-top: 1px solid var(--stage-line); padding: 16px; background: rgba(255, 255, 255, 0.02); }
+.review-head { font-size: 12.5px; color: #e0ae4e; font-weight: 600; margin-bottom: 10px; }
+.review-panel label { margin: 11px 0 4px; color: var(--stage-text-2); }
+.review-panel label:first-of-type { margin-top: 0; }
+.review-panel input[type="text"] {
+  padding: 7px 9px; font-size: 13px;
+  background: var(--stage); border-color: var(--stage-line); color: var(--stage-text);
 }
+.review-panel input[type="text"]:hover { border-color: var(--stage-text-2); }
+.review-panel .go { padding: 8px 12px; font-size: 13px; background: var(--marigold); color: #1a1405; }
+.review-panel .go:hover:not(:disabled) { background: #e0ae4e; }
+.review-panel .ghost { background: transparent; }
+
+/* The English gloss is what makes reviewing a script you cannot read
+   meaningful, so it sits under the headline rather than in a tooltip. */
+.backtrans { font-size: 12px; color: var(--stage-text-2); margin-top: 4px; border-left: 2px solid var(--stage-line); padding-left: 9px; }
 
 .log {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 11px; color: var(--muted); background: #101218;
-  border: 1px solid var(--line); border-radius: 8px; padding: 10px;
-  margin-top: 12px; max-height: 190px; overflow-y: auto; white-space: pre-wrap;
+  font-size: 11.5px; color: var(--stage-text-2); background: var(--stage-2);
+  border: 1px solid var(--stage-line); border-radius: var(--r);
+  padding: 12px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; margin-top: 10px;
 }
 
-.bar { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 9px; }
-.bar > i { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
+/* --------------------------------------------------------------- narrow */
 
-.pill {
-  display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 999px;
-  border: 1px solid var(--line); color: var(--muted); margin-left: 6px;
-}
-.pill.ok { color: var(--ok); border-color: #2c5a3e; }
-.pill.bad { color: var(--bad); border-color: #5a3030; }
-.pill.mock { color: var(--warn); border-color: #5a4a22; }
-
-/* --- review ------------------------------------------------------------ */
-.review-panel {
-  width: 300px; background: var(--panel); border: 1px solid var(--line);
-  border-top: 0; border-radius: 0 0 var(--radius) var(--radius); padding: 12px 13px;
-}
-.review-head {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px;
-  color: var(--warn); font-weight: 650; margin-bottom: 8px;
-}
-.review-panel label { margin: 8px 0 3px; }
-.review-panel input[type="text"] { padding: 7px 9px; font-size: 13px; }
-
-/* The English gloss is what makes reviewing a script you cannot read
-   meaningful, so it sits directly under the headline rather than in a tooltip. */
-.backtrans {
-  font-size: 11px; color: var(--muted); margin-top: 5px;
-  border-left: 2px solid var(--line); padding-left: 8px;
-}
-.backtrans i { color: var(--text); font-style: normal; }
-
-.approved {
-  width: 300px; padding: 9px 13px; font-size: 12px; color: var(--ok);
-  background: var(--panel); border: 1px solid var(--line); border-top: 0;
-  border-radius: 0 0 var(--radius) var(--radius);
-  display: flex; justify-content: space-between; align-items: center;
-}
-button.link {
-  background: none; border: 0; color: var(--muted); text-decoration: underline;
-  cursor: pointer; font-size: 11px; padding: 0; width: auto;
-}
-
-/* --- compiled brief ----------------------------------------------------- */
-/* The user typed one line; this is what it became. Showing it matters --
-   otherwise the picture arrives with no explanation of where it came from. */
-.brief-card {
-  background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 8px; padding: 11px 12px; margin-top: 12px; font-size: 11.5px;
-  color: var(--text); line-height: 1.5;
-}
-.brief-head {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px;
-  color: var(--accent); font-weight: 650; margin-bottom: 7px;
-}
-.brief-card b {
-  display: block; color: var(--muted); font-weight: 600; font-size: 10px;
-  text-transform: uppercase; letter-spacing: 0.4px; margin-top: 7px;
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; height: auto; overflow: visible; }
+  .panel { border-right: 0; border-bottom: 1px solid var(--stone); }
+  .panel-scroll { overflow: visible; }
+  .stage { overflow: visible; min-height: 60vh; }
+  .action { position: sticky; bottom: 0; z-index: 2; }
 }

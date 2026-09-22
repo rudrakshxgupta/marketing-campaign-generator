@@ -5,3 +5,7 @@ __pycache__/
 storage/
 .env
 node_modules/
+
+# Skills installed via `npx skills add` — vendored copies, not our source.
+.agents/
+.claude/
