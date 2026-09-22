@@ -6,6 +6,8 @@ languages, built on Microsoft AI Foundry with **MAI-Image-2.6**.
 📖 **[Full documentation](docs/)** — architecture, constraints, API, typography,
 compliance, decisions, roadmap.
 
+📋 **[Project report](PROJECT_REPORT.md)** — current status · 🔨 **[How it was built](HOW_IT_WAS_BUILT.md)** — the making of it
+
 ---
 
 ## The one idea
@@ -143,7 +145,7 @@ backend/app/
   imaging/                  dimensions, safe zones, compositing, Chromium overlay
   copy/                     languages, prompt construction, transcreation
 docs/                       full documentation
-.github/backlog.json        38 issues as data, with an idempotent seeder
+.github/backlog.json        40 issues as data, with an idempotent seeder
 ```
 
 See [docs/code-map.md](docs/code-map.md) for the module-by-module reference.
@@ -218,5 +220,5 @@ gate, category compliance gates, and the React frontend.
 `MaiImageClient` is written and unit-tested but has **never touched the real
 endpoint** — mock mode is on by default and a test asserts it stays on.
 
-38 issues track everything: **19 built, 19 pending**. See
+40 issues track everything: **21 built, 19 pending**. See
 [docs/roadmap.md](docs/roadmap.md).

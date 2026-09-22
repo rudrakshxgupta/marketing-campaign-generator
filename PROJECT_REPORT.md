@@ -11,9 +11,9 @@ campaign creatives in Indian languages, built on Microsoft AI Foundry with
 | Repository | [rudrakshxgupta/marketing-campaign-generator](https://github.com/rudrakshxgupta/marketing-campaign-generator) (private) |
 | Tests | **179 passing**, ~36 seconds |
 | Code | 3,246 lines across 20 modules · 1,169 lines of tests |
-| Issues | **38 total — 19 built, 19 pending** |
+| Issues | **40 total — 21 built, 19 pending** |
 | Phase 1 | ✅ Complete |
-| Phase 2 | 7 of 12 — everything buildable without Azure is built |
+| Phase 2 | 9 of 14 — everything buildable without Azure is built |
 | Azure | **Not yet connected.** Nothing has run against the live service. |
 
 ---
@@ -453,6 +453,7 @@ Inherent to the design rather than unfinished:
 | [docs/testing.md](docs/testing.md) | Including what must be checked by eye |
 | [docs/decisions.md](docs/decisions.md) | 13 decision records |
 | [docs/roadmap.md](docs/roadmap.md) | Built vs pending, mapped to issues |
+| [HOW_IT_WAS_BUILT.md](HOW_IT_WAS_BUILT.md) | The making of it — research, decisions, bugs |
 
 The backlog lives in [`.github/backlog.json`](.github/backlog.json) with an
 idempotent seeder — add to the JSON and re-run rather than hand-editing on

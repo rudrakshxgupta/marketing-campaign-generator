@@ -46,6 +46,10 @@ PROMPT = (
 )
 
 
+class _MinimalStop(Exception):
+    """Raised to jump to the report after --minimal's single image."""
+
+
 @dataclass
 class Findings:
     lines: list[str] = field(default_factory=list)
@@ -74,6 +78,9 @@ def looks_like_c2pa(png: bytes) -> tuple[bool, str]:
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--minimal", action="store_true",
+                        help="ONE image only. Still answers connectivity, dimensions, "
+                             "latency and C2PA -- everything that changes the design.")
     parser.add_argument("--rpm-test", action="store_true",
                         help="test whether deployments have separate RPM buckets (+4 calls)")
     parser.add_argument("--skip-edit", action="store_true")
@@ -104,6 +111,7 @@ async def main() -> int:
     calls = 0
 
     try:
+      try:
         # -- 1. connectivity, auth, and geometry --------------------------
         print("[1/6] one real generation at portrait size ...")
         plan = plan_for("portrait")
@@ -139,6 +147,17 @@ async def main() -> int:
         )
 
         # -- 2. latency, 2.6 vs Flash -------------------------------------
+        if args.minimal:
+            print("[2/6] skipped (--minimal): no Flash comparison")
+            flash_elapsed = None
+            findings.record(
+                "What is real generation latency?",
+                f"MAI-Image-2.6: **{elapsed:.1f}s** at {plan.gen_w}x{plan.gen_h}",
+                "Flash not compared (--minimal). At 2 RPM the limiter allows one "
+                f"call every 30s, so latency "
+                f"{'is not' if elapsed < 30 else 'IS'} the binding constraint.",
+            )
+            raise _MinimalStop
         print("[2/6] latency of MAI-Image-2.6-Flash for comparison ...")
         flash_note = ""
         try:
@@ -203,8 +222,8 @@ async def main() -> int:
             )
 
         # -- 5. edits geometry --------------------------------------------
-        if args.skip_edit:
-            print("[5/6] skipped (--skip-edit)")
+        if args.skip_edit or args.minimal:
+            print("[5/6] skipped (costs one image)")
         else:
             print("[5/6] edits endpoint: does output geometry follow the input? ...")
             try:
@@ -279,6 +298,16 @@ async def main() -> int:
                 f"Flash succeeding while 2.6 is limited indicates separate buckets.",
             )
 
+      except _MinimalStop:
+        # --minimal: the C2PA check below still runs on the image we have.
+        has_c2pa, detail = looks_like_c2pa(result.png)
+        print(f"[3/6] Content Credentials: {'found' if has_c2pa else 'not found'}")
+        findings.record(
+            "Does MAI output carry C2PA Content Credentials?",
+            "YES" if has_c2pa else "**NO**",
+            detail + ("" if has_c2pa else "  We must sign our own manifest at "
+                      "the compositing step (#15)."),
+        )
     finally:
         await client.aclose()
 

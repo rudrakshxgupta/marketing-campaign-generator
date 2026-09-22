@@ -552,6 +552,31 @@
       ],
       "milestone": "Phase 3 - languages",
       "body": "Subject preservation is verified against **synthetic buildings only**. The thresholds - 0.92 similarity for architecture, 0.90 extent overlap, +/-15% detail density - are reasoned from what the signals mean, not measured against real model output.\n\nReal photographs differ from the test fixtures in ways that matter: grain, compression, depth of field, and a subject that does not have crisp geometric edges. A restaging that is entirely acceptable may score lower than a synthetic one that is not.\n\n**Tasks**\n\n- [ ] Collect a small set of real edits: property exteriors, interiors, product shots, jewellery\n- [ ] Score each, and have a human label whether the subject actually survived\n- [ ] Plot the two against each other and move the thresholds to where they separate\n- [ ] Check the false-positive rate specifically. Over-rejecting legitimate restaging would make the feature worse than not having it, because users learn to switch it off\n- [ ] Re-check the dramatic cases: day to night changes facade tone legitimately\n\nDepends on #29 for a working deployment. Until then the current thresholds are the honest best guess, and the failure direction is right - it flags for review rather than discarding."
+    },
+    {
+      "title": "Zero-cost connection and resource discovery tooling",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: foundry",
+        "area: cost",
+        "area: infra",
+        "phase: 2"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "Connecting to Azure had to be cheap to get wrong, because the real probe costs images and a typo in an endpoint should not cost an image to discover.\n\n**`check_connection.py`** verifies auth and deployment names with a **deliberately invalid request** - a width below the 768 floor, which the service rejects before generating anything. The status code still separates the three failures that matter: `401` bad key, `404` wrong deployment name, `400` both fine. Zero images.\n\nIt also detects the portal **project URL** being pasted instead of the host root. They look nearly identical and only one works, which is an easy hour to lose.\n\n**`discover_foundry.ps1`** handles an existing resource rather than creating one. It answers the non-obvious question: MAI image models are preview and run only in `southindia` and `uaenorth`, so a perfectly healthy Azure OpenAI resource elsewhere simply cannot run them - and that failure surfaces as a 404 on the deployment name, which looks like a typo rather than a region problem. When the region cannot support it, the script lists the image models that *are* available there instead of just refusing.\n\nAz calls go through a helper that keeps them quiet: PowerShell 5.1 turns a native command's stderr into ErrorRecords, so an expected failure like \"not signed in\" printed a wall of `NativeCommandError` noise over the actual message.\n\n**It earned its keep immediately.** On first run it proved the endpoint and key were both valid while revealing that no MAI deployment existed - without spending anything.\n\n**Files**: `backend/scripts/check_connection.py`, `scripts/discover_foundry.ps1`"
+    },
+    {
+      "title": "Cut the live probe to a single image",
+      "state": "closed",
+      "labels": [
+        "status: done",
+        "area: cost",
+        "area: foundry",
+        "phase: 2"
+      ],
+      "milestone": "Phase 2 - live MAI",
+      "body": "The probe was designed to cost 3 images. On a student subscription with limited credits for a showcase, that is the wrong default.\n\n`--minimal` runs **one** image and still answers everything that could change the design:\n\n- does it connect, and are dimensions honoured\n- **real generation latency** - the number that decides whether the UI waits on screen or notifies, and which the documentation does not state anywhere\n- **C2PA** - whether output already carries an AI-provenance certificate, which decides how much of #15 is actually needed\n\nWhat it skips is comparisons rather than blockers: the Flash speed comparison and the edits-geometry check. Both can wait until they matter.\n\nAlso tightened the default ceilings for a student subscription: **5 images/day, 30 total**, down from 25/200."
     }
   ]
 }
