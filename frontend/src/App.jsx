@@ -146,7 +146,7 @@ export default function App() {
           Campaign Generator
           {health && (
             <span className={`pill ${health.mock ? "mock" : "ok"}`}>
-              {health.mock ? "mock images" : "live"}
+              {health.mock ? "mock images" : health.image_model || "live"}
             </span>
           )}
         </h1>
@@ -236,7 +236,17 @@ export default function App() {
             </span>
           ))}
         </div>
-        <div className="hint">Each format costs one image — unless economy mode is on.</div>
+        <div className="hint">
+          Each format costs one image — unless economy mode is on.
+          {meta?.backend && (
+            <>
+              {" "}Generating on <b>{meta.backend.name}</b>
+              {(meta.formats || []).every((f) => f.upscale <= 1.05)
+                ? " — every format renders at native size, no upscaling."
+                : " — smaller formats are upscaled to fit Instagram."}
+            </>
+          )}
+        </div>
 
         <h2>Languages</h2>
         <div className="chips">
@@ -275,13 +285,27 @@ export default function App() {
             {deliverables} deliverable{deliverables === 1 ? "" : "s"}
           </span>
           {usage && !usage.mock && (
-            <span style={{ color: "var(--muted)" }}>
-              {usage.today.remaining} left today
+            <span style={{ color: usage.today.remaining <= 1 ? "var(--bad)" : "var(--muted)" }}>
+              {usage.today.remaining}/{usage.today.limit} left today
+              {usage.cache?.calls_saved > 0 && ` · ${usage.cache.calls_saved} cached`}
             </span>
           )}
         </div>
 
-        <button onClick={generate} disabled={busy || !formats.length || !locales.length}>
+        {usage && !usage.mock && usage.today.remaining < imageCalls && (
+          <div className="note bad">
+            This needs {imageCalls} image{imageCalls === 1 ? "" : "s"} but only{" "}
+            {usage.today.remaining} remain today. Raise <b>MAI_DAILY_LIMIT</b>, drop a
+            format, or turn on economy mode.
+          </div>
+        )}
+
+        <button
+          onClick={generate}
+          disabled={
+            busy || !formats.length || !locales.length ||
+            (usage && !usage.mock && usage.today.remaining < imageCalls)
+          }>
           {busy ? "Generating…" : `Generate — ${imageCalls} image${imageCalls === 1 ? "" : "s"}`}
         </button>
 
