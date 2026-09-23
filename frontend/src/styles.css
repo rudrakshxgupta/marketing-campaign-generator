@@ -1,55 +1,69 @@
 /* BrandlyAI.
  *
- * The palette is the brand's own: deep forest green and gold. That settles
- * an axis most dark interfaces spend badly -- the ground here is chromatic
- * rather than a tinted near-black, so the whole environment reads as a
- * colour someone chose instead of an absence of one.
+ * Graphite ground, emerald, amber.
  *
- * Gold is scarce on purpose. It marks exactly three things: what is
- * selected, what an action will spend, and the action itself. Nothing
- * decorative is gold, so the eye can use it as information.
+ * The ground is a cool near-black rather than a tinted one, so the only
+ * saturated things on screen are the accents and the user's own pictures.
+ * The emerald is the brand's forest green taken up to display brightness --
+ * the logo colour is right on a white page and disappears on a dark one.
  *
- * Structure is hairlines and space, not boxes inside boxes. The one place
- * the design raises its voice is the language selector, where each script
- * names itself in the same Noto face the renderer will composite -- because
- * setting those scripts correctly is the entire product.
+ * Two accents, each with exactly one job, which is what keeps a dark
+ * interface from reading as decoration:
+ *
+ *   emerald -- chosen, selected, live, passed
+ *   amber   -- what this will spend, and the button that spends it
+ *
+ * Nothing else is coloured. Structure is hairlines of light (white at low
+ * alpha) rather than drawn borders, so panels separate without the interface
+ * turning into boxes inside boxes.
+ *
+ * Numbers are set in mono throughout. Image counts, pixel sizes and budgets
+ * are compared constantly here, and proportional digits make a column of
+ * them jitter.
  */
 
 :root {
-  /* --- brand ---------------------------------------------------------- */
-  --ground: #0a1711;        /* forest green-black, the environment */
-  --raise: #0f2119;         /* content surfaces */
-  --raise-2: #142b20;       /* inputs, pressed states */
-  --edge: #1d3a2b;          /* hairlines */
-  --edge-lit: #2a5240;      /* hairlines under the cursor */
+  /* --- ground --------------------------------------------------------- */
+  --void: #0a0c10;
+  --surface: #11151c;
+  --surface-2: #171c25;
+  --surface-3: #1e242f;
 
-  --bone: #edf1ec;          /* primary text, warm off-white, never #fff */
-  --sage: #9db0a4;          /* secondary text */
-  /* Both of these were set by eye and both failed AA on the lightest
-     surface -- 4.05 and 2.99 against --raise-2. Hue kept, value lifted
-     until every ink clears 4.5:1 on every ground it lands on. */
-  --sage-dim: #7d9487;      /* tertiary text, placeholders */
+  /* Hairlines as light, not as lines. */
+  --edge: rgba(255, 255, 255, 0.07);
+  --edge-lit: rgba(255, 255, 255, 0.14);
 
-  --gold: #c9a24c;
-  --gold-lit: #e0c177;
-  --gold-ink: #17110a;      /* text on a gold field */
-  --gold-wash: rgba(201, 162, 76, 0.12);
+  --text: #e8edf4;
+  --text-2: #9ba6b7;
+  /* Measured, not eyeballed: #7d8899 scored 4.34 against the lightest
+     surface, just under AA for body text, and hints and placeholders
+     are body text. Hue kept, value lifted until it clears 4.5 on
+     every ground it lands on. */
+  --text-3: #828d9e;
 
-  --green: #509e73;         /* success, "preserved" */
-  --alert: #d4736a;         /* failure, destructive */
+  /* --- accents -------------------------------------------------------- */
+  --emerald: #34d399;
+  --emerald-dim: #10a97a;
+  --emerald-wash: rgba(52, 211, 153, 0.12);
+  --emerald-ink: #04150f;
 
-  /* --- type scale ----------------------------------------------------
-     A modular scale, not a pile of one-off pixel values. Every size in the
-     interface is one of these seven. */
-  --t-micro: 11px;          /* counters, pills, ranks */
-  --t-small: 12.5px;        /* hints, labels, captions */
-  --t-body: 14px;           /* inputs, buttons, prose */
-  --t-lead: 15.5px;         /* card titles */
-  --t-head: 17px;           /* section headings */
-  --t-title: 21px;          /* the wordmark */
-  --t-display: 30px;        /* reserved for empty states */
+  --amber: #f5b544;
+  --amber-wash: rgba(245, 181, 68, 0.12);
+  --amber-ink: #1a1204;
 
-  /* --- spacing scale, 4px base ---------------------------------------- */
+  --rose: #f87171;
+
+  /* --- type scale ------------------------------------------------------
+     Seven steps. Every size in the interface is one of these. */
+  --t-micro: 11px;
+  --t-small: 12.5px;
+  --t-body: 14px;
+  --t-lead: 15.5px;
+  --t-head: 17px;
+  --t-title: 21px;
+  --t-display: 30px;
+
+  /* --- spacing, 4px base ----------------------------------------------- */
   --s1: 4px;
   --s2: 8px;
   --s3: 12px;
@@ -65,6 +79,7 @@
   --panel-w: 400px;
 
   --sans: "Inter Variable", "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -72,25 +87,21 @@ html, body, #root { height: 100%; }
 
 body {
   margin: 0;
-  background: var(--ground);
-  color: var(--bone);
+  background: var(--void);
+  color: var(--text);
   font-family: var(--sans);
   font-size: var(--t-body);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* Numbers are compared constantly here -- image counts, pixel sizes,
-     budgets -- and proportional digits make columns of them jitter. */
   font-variant-numeric: tabular-nums;
 }
 
-/* Display sizes need negative tracking; body sizes do not. Applying one
-   value to everything is what makes interface type look untended. */
 h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.25; margin: 0; font-weight: 600; }
 
 /* Indic scripts must never be tracked -- positive letter-spacing detaches
-   matras and breaks conjuncts -- and they need more leading than Latin.
-   Same faces the renderer composites with, so this previews the output. */
+   matras and breaks conjuncts -- and they need more leading than Latin. The
+   same faces the renderer composites with, so this previews the output. */
 :lang(hi), :lang(mr) { font-family: "Noto Sans Devanagari", "Nirmala UI", sans-serif; }
 :lang(bn) { font-family: "Noto Sans Bengali", "Nirmala UI", sans-serif; }
 :lang(ta) { font-family: "Noto Sans Tamil", "Nirmala UI", sans-serif; }
@@ -102,12 +113,10 @@ h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.25; margin: 0; font-weight:
 
 button, input, textarea, select { font: inherit; color: inherit; }
 
-/* One focus treatment, defined once. Removing focus rings is the single
-   commonest way an interface stops being usable without a mouse. */
 :where(a, button, input, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--gold);
+  outline: 2px solid var(--emerald);
   outline-offset: 2px;
-  border-radius: var(--r-sm);
+  border-radius: 4px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -117,95 +126,105 @@ button, input, textarea, select { font: inherit; color: inherit; }
   }
 }
 
-::selection { background: var(--gold-wash); color: var(--bone); }
-
-/* Scrollbars, because a default light scrollbar on a dark ground is the
-   detail that gives away an unfinished interface. */
+::selection { background: var(--emerald-wash); color: var(--text); }
 * { scrollbar-width: thin; scrollbar-color: var(--edge-lit) transparent; }
+
+/* A bare <button> inherits the OS default, which on Windows is a white
+   rectangle -- unmissable on a dark ground, and exactly what shipped once.
+   This is the floor: forgetting a class degrades to something wearable
+   rather than to a hole in the layout. */
+button:not([class]) {
+  appearance: none; cursor: pointer;
+  background: var(--surface-3); color: var(--text);
+  border: 1px solid var(--edge-lit); border-radius: var(--r-sm);
+  padding: 8px var(--s3); font-size: var(--t-small);
+}
+button:not([class]):hover { border-color: var(--text-3); }
 
 /* ---------------------------------------------------------------- shell */
 
 .app { display: grid; grid-template-columns: var(--panel-w) 1fr; height: 100vh; overflow: hidden; }
 
 .panel {
-  background: var(--raise);
+  background: var(--surface);
   border-right: 1px solid var(--edge);
   display: flex; flex-direction: column; min-height: 0;
+  position: relative;
 }
 .panel-scroll { overflow-y: auto; padding: var(--s6); flex: 1; min-height: 0; }
 
+/* The one non-functional flourish in the interface, spent where a product
+   puts its name: a single soft emerald bloom behind the wordmark. Nothing
+   else on screen glows. */
 .brand {
   display: flex; align-items: center; gap: var(--s3);
   padding: var(--s5) var(--s6);
   border-bottom: 1px solid var(--edge);
+  position: relative;
+  background: radial-gradient(
+    120% 180% at 0% 0%, rgba(52, 211, 153, 0.13), transparent 62%
+  );
 }
 .brand img { width: 34px; height: 34px; object-fit: contain; flex: none; }
 .brand h1 {
   font-size: var(--t-title); font-weight: 650;
   letter-spacing: -0.035em; flex: 1; line-height: 1.1;
 }
-/* The wordmark splits the way the logo does. */
-.brand h1 .ai { color: var(--gold); }
+.brand h1 .ai { color: var(--emerald); }
 .brand .tag {
   display: block; font-size: var(--t-micro); font-weight: 400;
-  color: var(--sage-dim); letter-spacing: 0.04em; margin-top: 3px;
+  color: var(--text-3); letter-spacing: 0.06em; margin-top: 4px;
 }
 
 .pill {
-  font-size: var(--t-micro); font-weight: 550;
-  padding: 3px var(--s2); border-radius: 3px;
-  border: 1px solid var(--edge-lit); color: var(--sage);
-  white-space: nowrap; letter-spacing: 0.01em;
+  font-family: var(--mono);
+  font-size: var(--t-micro); font-weight: 500;
+  padding: 3px var(--s2); border-radius: var(--r-sm);
+  border: 1px solid var(--edge-lit); color: var(--text-2);
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.02);
 }
-.pill.ok { color: var(--green); border-color: rgba(80, 158, 115, 0.5); }
-.pill.warn { color: var(--gold); border-color: rgba(201, 162, 76, 0.45); }
+.pill.ok {
+  color: var(--emerald); border-color: rgba(52, 211, 153, 0.35);
+  background: var(--emerald-wash);
+}
+.pill.warn {
+  color: var(--amber); border-color: rgba(245, 181, 68, 0.35);
+  background: var(--amber-wash);
+}
 
 /* ------------------------------------------------------------- sections */
 
-/* A hairline and a heading. No eyebrow, no numbering: the fields are all
-   visible at once, so numbering would claim a sequence that is not there. */
 .step { padding-bottom: var(--s6); margin-bottom: var(--s6); border-bottom: 1px solid var(--edge); }
 .step:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
 
 .step > h2 { font-size: var(--t-head); margin-bottom: var(--s1); }
-.step > h2 .opt {
-  font-weight: 400; color: var(--sage-dim); font-size: var(--t-small);
-  letter-spacing: 0;
-}
-.step > .lede {
-  margin: 0 0 var(--s4); font-size: var(--t-small);
-  color: var(--sage); max-width: 46ch;
-}
+.step > h2 .opt { font-weight: 400; color: var(--text-3); font-size: var(--t-small); letter-spacing: 0; }
+.step > .lede { margin: 0 0 var(--s4); font-size: var(--t-small); color: var(--text-2); max-width: 46ch; }
 
-label {
-  display: block; font-size: var(--t-small); font-weight: 500;
-  color: var(--sage); margin: 0 0 var(--s2);
-}
+label { display: block; font-size: var(--t-small); font-weight: 500; color: var(--text-2); margin: 0 0 var(--s2); }
 
 input[type="text"], textarea {
   width: 100%;
-  background: var(--ground);
-  border: 1px solid var(--edge);
+  background: var(--void);
+  border: 1px solid var(--edge-lit);
   border-radius: var(--r-sm);
-  color: var(--bone);
+  color: var(--text);
   padding: 10px var(--s3);
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-input[type="text"]:hover, textarea:hover { border-color: var(--edge-lit); }
+input[type="text"]:hover, textarea:hover { border-color: var(--text-3); }
 input[type="text"]:focus, textarea:focus {
-  border-color: var(--gold); outline: none;
-  box-shadow: 0 0 0 3px var(--gold-wash);
+  border-color: var(--emerald); outline: none;
+  box-shadow: 0 0 0 3px var(--emerald-wash);
 }
 textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
-::placeholder { color: var(--sage-dim); }
+::placeholder { color: var(--text-3); }
 
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
 
-.hint {
-  font-size: var(--t-small); color: var(--sage-dim);
-  line-height: 1.5; margin-top: var(--s2); max-width: 46ch;
-}
-.hint b { color: var(--sage); font-weight: 600; }
+.hint { font-size: var(--t-small); color: var(--text-3); line-height: 1.5; margin-top: var(--s2); max-width: 46ch; }
+.hint b { color: var(--text-2); font-weight: 600; }
 
 /* --------------------------------------------------------------- chips */
 
@@ -213,19 +232,21 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 
 .chip {
   appearance: none;
-  background: var(--raise-2);
-  border: 1px solid var(--edge);
+  background: var(--surface-2);
+  border: 1px solid var(--edge-lit);
   border-radius: var(--r-sm);
-  color: var(--sage);
+  color: var(--text-2);
   padding: 7px var(--s3);
   font-size: var(--t-small);
   cursor: pointer;
   transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
 }
-.chip:hover { border-color: var(--edge-lit); color: var(--bone); }
+.chip:hover { border-color: var(--text-3); color: var(--text); }
 .chip[aria-pressed="true"] {
-  background: var(--gold-wash); border-color: var(--gold);
-  color: var(--gold-lit); font-weight: 550;
+  background: var(--emerald-wash);
+  border-color: rgba(52, 211, 153, 0.55);
+  color: var(--emerald);
+  font-weight: 550;
 }
 
 /* The one place the design raises its voice: each language names itself in
@@ -234,57 +255,57 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 
 .lang {
   appearance: none;
-  background: var(--raise-2);
-  border: 1px solid var(--edge);
+  background: var(--surface-2);
+  border: 1px solid var(--edge-lit);
   border-radius: var(--r);
   padding: var(--s3) var(--s3) 10px;
   cursor: pointer; text-align: left;
   transition: border-color 0.12s ease, background 0.12s ease;
 }
-.lang:hover { border-color: var(--edge-lit); }
-.lang[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-wash); }
-.lang .native {
-  display: block; font-size: 20px; line-height: 1.4;
-  color: var(--bone); letter-spacing: -0.01em;
+.lang:hover { border-color: var(--text-3); }
+.lang[aria-pressed="true"] {
+  border-color: rgba(52, 211, 153, 0.55);
+  background: var(--emerald-wash);
 }
+.lang .native { display: block; font-size: 20px; line-height: 1.4; color: var(--text); letter-spacing: -0.01em; }
 .lang .name {
-  display: block; font-size: var(--t-micro); color: var(--sage-dim);
-  margin-top: 2px; letter-spacing: 0.02em;
+  display: block; font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--text-3); margin-top: 3px;
 }
-.lang[aria-pressed="true"] .name { color: var(--gold); font-weight: 550; }
+.lang[aria-pressed="true"] .name { color: var(--emerald); }
 
 /* ------------------------------------------------------------- uploads */
 
 .drop {
   display: flex; align-items: center; gap: var(--s3);
   width: 100%;
-  background: var(--raise-2);
+  background: var(--surface-2);
   border: 1px dashed var(--edge-lit);
   border-radius: var(--r);
   padding: var(--s3);
-  transition: border-color 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
-.drop:hover { border-color: var(--gold); }
+.drop:hover { border-color: var(--emerald); background: var(--surface-3); }
 .drop.filled { border-style: solid; }
 .drop-thumb {
   width: 40px; height: 40px; flex: none; border-radius: var(--r-sm);
-  background: var(--ground) center/contain no-repeat; border: 1px solid var(--edge);
+  background: var(--void) center/contain no-repeat; border: 1px solid var(--edge);
 }
 .drop-pick {
   appearance: none; background: none; border: 0; padding: 0;
   text-align: left; cursor: pointer; flex: 1; min-width: 0;
 }
 .drop-pick strong {
-  display: block; font-size: var(--t-small); font-weight: 600; color: var(--bone);
+  display: block; font-size: var(--t-small); font-weight: 600; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.drop-pick span { font-size: var(--t-micro); color: var(--sage-dim); }
+.drop-pick span { font-size: var(--t-micro); color: var(--text-3); }
 .drop-clear {
   appearance: none; background: none; border: 0; cursor: pointer;
-  color: var(--sage-dim); font-size: 17px; line-height: 1;
+  color: var(--text-3); font-size: 17px; line-height: 1;
   padding: var(--s1) var(--s2); border-radius: var(--r-sm);
 }
-.drop-clear:hover { color: var(--alert); background: var(--ground); }
+.drop-clear:hover { color: var(--rose); background: var(--void); }
 
 .refs {
   list-style: none; margin: var(--s3) 0 0; padding: 0;
@@ -293,24 +314,24 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 .refs li { position: relative; aspect-ratio: 1; }
 .refs img {
   width: 100%; height: 100%; object-fit: cover; display: block;
-  border-radius: var(--r-sm); border: 1px solid var(--edge);
+  border-radius: var(--r-sm); border: 1px solid var(--edge-lit);
 }
 /* In edit mode the order is load-bearing -- first is the subject, the rest
    are context -- so it is labelled rather than left to be inferred. */
 .refs .rank {
   position: absolute; left: var(--s1); bottom: var(--s1);
-  font-size: 9.5px; font-weight: 600; color: var(--gold-ink);
-  background: var(--gold); padding: 1px 5px; border-radius: 3px;
-  letter-spacing: 0.02em;
+  font-family: var(--mono); font-size: 9.5px; font-weight: 500;
+  color: var(--emerald-ink); background: var(--emerald);
+  padding: 1px 5px; border-radius: 3px;
 }
 .refs li button {
   position: absolute; top: -6px; right: -6px;
   width: 20px; height: 20px; border-radius: 50%;
-  background: var(--ground); color: var(--bone);
+  background: var(--void); color: var(--text);
   border: 1px solid var(--edge-lit);
   font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
 }
-.refs li button:hover { background: var(--alert); border-color: var(--alert); color: #fff; }
+.refs li button:hover { background: var(--rose); border-color: var(--rose); color: #fff; }
 
 /* -------------------------------------------------- reference mode cards */
 
@@ -321,143 +342,152 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 
 .mode {
   appearance: none; text-align: left;
-  background: var(--raise-2);
-  border: 1px solid var(--edge);
+  background: var(--surface-2);
+  border: 1px solid var(--edge-lit);
   border-radius: var(--r);
   padding: var(--s3) var(--s4);
-  cursor: pointer; color: var(--sage);
+  cursor: pointer; color: var(--text-2);
   display: grid; grid-template-columns: 15px 1fr; gap: var(--s3);
   align-items: start;
   transition: border-color 0.12s ease, background 0.12s ease;
 }
-.mode:hover { border-color: var(--edge-lit); }
-.mode[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-wash); }
+.mode:hover { border-color: var(--text-3); }
+.mode[aria-pressed="true"] { border-color: rgba(52, 211, 153, 0.55); background: var(--emerald-wash); }
 .mode .dot {
   width: 14px; height: 14px; margin-top: 3px; border-radius: 50%;
-  border: 1.5px solid var(--edge-lit); background: var(--ground);
+  border: 1.5px solid var(--edge-lit); background: var(--void);
 }
 .mode[aria-pressed="true"] .dot {
-  border-color: var(--gold); box-shadow: inset 0 0 0 3px var(--gold);
+  border-color: var(--emerald); box-shadow: inset 0 0 0 3px var(--emerald);
 }
 .mode strong {
-  display: block; color: var(--bone); font-size: var(--t-body);
+  display: block; color: var(--text); font-size: var(--t-body);
   font-weight: 600; margin-bottom: 3px; letter-spacing: -0.01em;
 }
 .mode .body { font-size: var(--t-small); line-height: 1.5; display: block; }
 .mode .rec {
-  margin-left: var(--s2); font-size: var(--t-micro); font-weight: 650;
-  color: var(--gold); vertical-align: 1px; letter-spacing: 0.03em;
+  margin-left: var(--s2); font-family: var(--mono); font-size: var(--t-micro);
+  font-weight: 500; color: var(--emerald); vertical-align: 1px;
 }
 
 /* ---------------------------------------------------------------- notes */
 
 .note {
   border-left: 2px solid var(--edge-lit);
-  background: var(--raise-2);
+  background: var(--surface-2);
   padding: 10px var(--s3);
   margin: var(--s3) 0 0;
-  font-size: var(--t-small); color: var(--sage);
+  font-size: var(--t-small); color: var(--text-2);
   border-radius: 0 var(--r-sm) var(--r-sm) 0; line-height: 1.5;
 }
-.note.warn { border-color: var(--gold); background: var(--gold-wash); }
-.note.bad { border-color: var(--alert); background: rgba(212, 115, 106, 0.08); }
+.note.warn { border-color: var(--amber); background: var(--amber-wash); }
+.note.bad { border-color: var(--rose); background: rgba(248, 113, 113, 0.08); }
 
 .check {
   display: flex; align-items: flex-start; gap: var(--s2);
-  color: var(--bone); font-size: var(--t-body); margin: 0; cursor: pointer;
-  font-weight: 400;
+  color: var(--text); font-size: var(--t-body); margin: 0; cursor: pointer; font-weight: 400;
 }
-.check input { margin: 3px 0 0; accent-color: var(--gold); flex: none; }
+.check input { margin: 3px 0 0; accent-color: var(--emerald); flex: none; }
 
 /* --------------------------------------------------------------- action */
 
-/* Pinned, so the cost of the next click is visible without scrolling back. */
+/* Pinned and glassy, so the cost of the next click stays legible over
+   whatever is scrolling behind it. */
 .action {
   border-top: 1px solid var(--edge);
   padding: var(--s4) var(--s6) var(--s5);
-  background: var(--raise); flex: none;
+  background: rgba(17, 21, 28, 0.86);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  flex: none;
 }
 
 .cost {
   display: flex; justify-content: space-between; align-items: baseline;
-  font-size: var(--t-small); color: var(--sage); margin-bottom: 10px;
+  font-size: var(--t-small); color: var(--text-2); margin-bottom: 10px;
 }
-.cost b { color: var(--gold); font-weight: 650; }
-.cost .left { color: var(--sage-dim); }
-.cost .low { color: var(--alert); font-weight: 600; }
+.cost b { font-family: var(--mono); color: var(--amber); font-weight: 500; }
+.cost .left { color: var(--text-3); font-family: var(--mono); font-size: var(--t-micro); }
+.cost .low { color: var(--rose); font-weight: 600; }
 
 .go {
   appearance: none; width: 100%; cursor: pointer;
-  background: var(--gold); color: var(--gold-ink);
+  background: var(--amber); color: var(--amber-ink);
   border: 0; border-radius: var(--r-sm);
   padding: 12px var(--s4); font-size: var(--t-body); font-weight: 650;
   letter-spacing: -0.01em;
-  transition: background 0.12s ease, transform 0.06s ease;
+  transition: background 0.12s ease, transform 0.06s ease, box-shadow 0.12s ease;
 }
-.go:hover:not(:disabled) { background: var(--gold-lit); }
+.go:hover:not(:disabled) {
+  background: #ffc85f;
+  box-shadow: 0 0 0 1px rgba(245, 181, 68, 0.4), 0 8px 24px rgba(245, 181, 68, 0.16);
+}
 /* Motion that answers the press, rather than motion for its own sake. */
 .go:active:not(:disabled) { transform: translateY(1px); }
-.go:disabled { background: var(--raise-2); color: var(--sage-dim); cursor: not-allowed; }
+.go:disabled { background: var(--surface-3); color: var(--text-3); cursor: not-allowed; }
 
 .ghost {
   appearance: none; cursor: pointer;
-  background: transparent; color: var(--sage);
+  background: rgba(255, 255, 255, 0.03); color: var(--text-2);
   border: 1px solid var(--edge-lit); border-radius: var(--r-sm);
   padding: 7px var(--s3); font-size: var(--t-small); text-decoration: none;
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 }
-.ghost:hover { color: var(--bone); border-color: var(--sage-dim); }
+.ghost:hover { color: var(--text); border-color: var(--text-3); background: rgba(255, 255, 255, 0.06); }
 
 /* ---------------------------------------------------------------- stage */
 
 .stage { overflow-y: auto; padding: var(--s5) var(--s6) var(--s7); min-height: 0; }
 
-.stage-bar {
-  display: flex; align-items: center; gap: var(--s2);
-  margin-bottom: var(--s6); flex-wrap: wrap; min-height: 30px;
-}
+.stage-bar { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s6); flex-wrap: wrap; min-height: 30px; }
 .stage-bar .spacer { flex: 1; }
 
 .toggle {
   display: inline-flex; align-items: center; gap: var(--s2);
-  font-size: var(--t-small); color: var(--sage); cursor: pointer;
-  margin: 0; font-weight: 400;
+  font-size: var(--t-small); color: var(--text-2); cursor: pointer; margin: 0; font-weight: 400;
 }
-.toggle input { accent-color: var(--gold); margin: 0; }
+.toggle input { accent-color: var(--emerald); margin: 0; }
 
 .empty {
-  color: var(--sage-dim);
-  border: 1px dashed var(--edge);
+  color: var(--text-3);
+  border: 1px dashed var(--edge-lit);
   border-radius: var(--r-lg);
   padding: var(--s7) var(--s6);
   text-align: center; max-width: 520px; margin: 12vh auto 0;
   font-size: var(--t-lead); line-height: 1.6;
+  background: radial-gradient(90% 140% at 50% 0%, rgba(52, 211, 153, 0.05), transparent 70%);
 }
 
-.bar { height: 2px; background: var(--edge); border-radius: 2px; overflow: hidden; }
-.bar i { display: block; height: 100%; background: var(--gold); transition: width 0.3s ease; }
+.bar { height: 2px; background: var(--surface-3); border-radius: 2px; overflow: hidden; }
+.bar i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--emerald-dim), var(--emerald));
+  transition: width 0.3s ease;
+}
 
 .working { max-width: 420px; margin: 14vh auto 0; text-align: center; }
 .working .bar { margin-bottom: var(--s5); }
-.working p { color: var(--bone); font-size: var(--t-lead); margin: 0 0 var(--s2); }
-.working .detail { color: var(--sage-dim); font-size: var(--t-small); }
+.working p { color: var(--text); font-size: var(--t-lead); margin: 0 0 var(--s2); }
+.working .detail, .working .step-log {
+  color: var(--text-3); font-size: var(--t-small); font-family: var(--mono);
+}
 
 /* "Nothing yet" and "this failed" must not look alike: the second needs an
    action from whoever is reading it. */
 .failed-card {
   max-width: 580px; margin: 8vh auto 0;
-  background: var(--raise); border: 1px solid var(--edge);
-  border-left: 3px solid var(--alert); border-radius: var(--r-lg);
+  background: var(--surface); border: 1px solid var(--edge);
+  border-left: 3px solid var(--rose); border-radius: var(--r-lg);
   padding: var(--s5) var(--s6);
 }
 .failed-card h3 { margin-bottom: var(--s2); font-size: var(--t-head); }
-.failed-card p { margin: 0 0 var(--s4); color: var(--sage); font-size: var(--t-body); line-height: 1.6; }
+.failed-card p { margin: 0 0 var(--s4); color: var(--text-2); font-size: var(--t-body); line-height: 1.6; }
 .failed-card details { margin-top: var(--s3); }
-.failed-card summary { cursor: pointer; font-size: var(--t-small); color: var(--sage-dim); user-select: none; padding: 3px 0; }
+.failed-card summary { cursor: pointer; font-size: var(--t-small); color: var(--text-3); user-select: none; padding: 3px 0; }
 
 .why {
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: var(--t-micro); color: var(--sage); background: var(--ground);
+  font-family: var(--mono);
+  font-size: var(--t-micro); color: var(--text-2); background: var(--void);
   border: 1px solid var(--edge); border-radius: var(--r-sm); padding: var(--s3);
   white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--s2) 0 0;
   max-height: 240px; overflow-y: auto; line-height: 1.6;
@@ -466,34 +496,29 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 /* --------------------------------------------------------- brief readout */
 
 .brief {
-  background: var(--raise); border: 1px solid var(--edge);
+  background: var(--surface); border: 1px solid var(--edge);
   border-radius: var(--r-lg); padding: var(--s4) var(--s5); margin-bottom: var(--s6);
 }
-.brief h3 { margin-bottom: var(--s3); font-size: var(--t-small); color: var(--gold); letter-spacing: 0; }
-.brief dl {
-  margin: 0; display: grid; grid-template-columns: 120px 1fr;
-  gap: var(--s2) var(--s4); font-size: var(--t-small);
-}
-.brief dt { color: var(--sage-dim); }
-.brief dd { margin: 0; color: var(--bone); }
+.brief h3 { margin-bottom: var(--s3); font-size: var(--t-small); color: var(--emerald); letter-spacing: 0; }
+.brief dl { margin: 0; display: grid; grid-template-columns: 120px 1fr; gap: var(--s2) var(--s4); font-size: var(--t-small); }
+.brief dt { color: var(--text-3); }
+.brief dd { margin: 0; color: var(--text); }
+.brief .note { background: var(--amber-wash); border-color: var(--amber); }
 
 /* ---------------------------------------------------------------- frames */
 
 .frames { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s5); align-items: start; }
 
 .card {
-  background: var(--raise); border: 1px solid var(--edge);
+  background: var(--surface); border: 1px solid var(--edge);
   border-radius: var(--r-lg); overflow: hidden;
 }
-.card-head {
-  display: flex; align-items: baseline; gap: var(--s2);
-  padding: var(--s3) var(--s4); border-bottom: 1px solid var(--edge);
-}
+.card-head { display: flex; align-items: baseline; gap: var(--s2); padding: var(--s3) var(--s4); border-bottom: 1px solid var(--edge); }
 .card-head .who { font-size: var(--t-lead); font-weight: 600; letter-spacing: -0.015em; }
-.card-head .what { margin-left: auto; font-size: var(--t-micro); color: var(--sage-dim); }
+.card-head .what { margin-left: auto; font-family: var(--mono); font-size: var(--t-micro); color: var(--text-3); }
 
 .phone { padding: var(--s4); }
-.screen { position: relative; border-radius: var(--r); overflow: hidden; background: var(--ground); }
+.screen { position: relative; border-radius: var(--r); overflow: hidden; background: var(--void); }
 .screen img { display: block; width: 100%; }
 
 /* Meta unified the 9:16 safe zone in March 2026: top 14%, bottom 35% for
@@ -504,35 +529,28 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
   background: repeating-linear-gradient(45deg, rgba(255, 110, 150, 0.14) 0 6px, transparent 6px 12px);
 }
 .safe-label {
-  position: absolute; font-size: 9.5px; color: #ffd6e2;
+  position: absolute; font-family: var(--mono); font-size: 9.5px; color: #ffd6e2;
   background: rgba(0, 0, 0, 0.65); padding: 2px 5px; border-radius: 3px;
   pointer-events: none; max-width: 92%;
 }
 
-.caption {
-  padding: var(--s3) var(--s4); font-size: var(--t-small);
-  color: var(--sage); border-top: 1px solid var(--edge); line-height: 1.55;
-}
-.caption .tags { color: var(--gold); margin-top: var(--s1); }
+.caption { padding: var(--s3) var(--s4); font-size: var(--t-small); color: var(--text-2); border-top: 1px solid var(--edge); line-height: 1.55; }
+.caption .tags { color: var(--emerald); margin-top: var(--s1); }
 
-.flag {
-  font-size: var(--t-small); color: var(--gold);
-  padding: 10px var(--s4) var(--s3); border-top: 1px solid var(--edge);
-}
+.flag { font-size: var(--t-small); color: var(--amber); padding: 10px var(--s4) var(--s3); border-top: 1px solid var(--edge); }
 
 /* ---------------------------------------------------------- review panel */
 
-.review-panel { border-top: 1px solid var(--edge); padding: var(--s4); background: var(--raise-2); }
+.review-panel { border-top: 1px solid var(--edge); padding: var(--s4); background: var(--surface-2); }
 .review-head {
   display: flex; align-items: baseline; gap: var(--s2);
-  font-size: var(--t-small); color: var(--gold); font-weight: 600;
-  margin-bottom: var(--s3);
+  font-size: var(--t-small); color: var(--amber); font-weight: 600; margin-bottom: var(--s3);
 }
 /* Says the picture is catching up, without moving anything: a spinner here
    would draw the eye away from the creative, which is the thing to watch. */
 .review-head .live {
-  margin-left: auto; font-weight: 400; color: var(--sage-dim);
-  font-size: var(--t-micro);
+  margin-left: auto; font-family: var(--mono); font-weight: 400;
+  color: var(--emerald); font-size: var(--t-micro);
 }
 .review-panel label { margin: var(--s3) 0 var(--s1); }
 .review-panel label:first-of-type { margin-top: 0; }
@@ -542,38 +560,26 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 .approved {
   display: flex; align-items: center; gap: var(--s2);
   border-top: 1px solid var(--edge); padding: var(--s3) var(--s4);
-  font-size: var(--t-small); color: var(--green);
+  font-size: var(--t-small); color: var(--emerald);
 }
 .link {
   appearance: none; background: none; border: 0; padding: 0;
-  color: var(--sage-dim); font-size: var(--t-small);
+  color: var(--text-3); font-size: var(--t-small);
   text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
   margin-left: auto;
 }
-.link:hover { color: var(--bone); }
-
-/* A bare <button> inherits the OS default, which on Windows is a white
-   rectangle -- unmissable on a dark ground and exactly what shipped. This
-   is the floor, so forgetting a class degrades to something wearable
-   rather than to a hole in the layout. */
-button:not([class]) {
-  appearance: none; cursor: pointer;
-  background: var(--raise-2); color: var(--bone);
-  border: 1px solid var(--edge-lit); border-radius: var(--r-sm);
-  padding: 8px var(--s3); font-size: var(--t-small);
-}
-button:not([class]):hover { border-color: var(--sage-dim); }
+.link:hover { color: var(--text); }
 
 /* The English gloss is what makes reviewing a script you cannot read
    meaningful, so it sits under the headline rather than in a tooltip. */
 .backtrans {
-  font-size: var(--t-micro); color: var(--sage-dim); margin-top: var(--s1);
-  border-left: 2px solid var(--edge); padding-left: var(--s2); line-height: 1.55;
+  font-size: var(--t-micro); color: var(--text-3); margin-top: var(--s1);
+  border-left: 2px solid var(--edge-lit); padding-left: var(--s2); line-height: 1.55;
 }
 
 .log {
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: var(--t-micro); color: var(--sage-dim); background: var(--raise);
+  font-family: var(--mono);
+  font-size: var(--t-micro); color: var(--text-3); background: var(--surface);
   border: 1px solid var(--edge); border-radius: var(--r-sm);
   padding: var(--s3); white-space: pre-wrap; max-height: 200px;
   overflow-y: auto; margin-top: var(--s2); line-height: 1.7;
@@ -581,14 +587,13 @@ button:not([class]):hover { border-color: var(--sage-dim); }
 
 /* -------------------------------------------------------------- lightbox */
 
-.zoom {
-  appearance: none; display: block; width: 100%; padding: 0;
-  background: none; border: 0; cursor: zoom-in;
-}
+.zoom { appearance: none; display: block; width: 100%; padding: 0; background: none; border: 0; cursor: zoom-in; }
 
 .lightbox {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(5, 12, 8, 0.94);
+  background: rgba(6, 8, 11, 0.92);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: grid; place-items: center; padding: var(--s5);
 }
 .lightbox-inner { display: flex; flex-direction: column; gap: var(--s3); max-height: 100%; min-height: 0; }
@@ -598,11 +603,11 @@ button:not([class]):hover { border-color: var(--sage-dim); }
   max-height: calc(100vh - 124px); max-width: 100%;
   object-fit: contain; border-radius: var(--r);
   display: block; margin: 0 auto;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
-.lightbox-bar { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; color: var(--bone); }
+.lightbox-bar { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; color: var(--text); }
 .lightbox-bar .who { font-size: var(--t-lead); font-weight: 600; }
-.lightbox-bar .what { font-size: var(--t-small); color: var(--sage); }
+.lightbox-bar .what { font-family: var(--mono); font-size: var(--t-small); color: var(--text-2); }
 .lightbox-bar .spacer { flex: 1; }
 
 /* --------------------------------------------------------------- narrow */
