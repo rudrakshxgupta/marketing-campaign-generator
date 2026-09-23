@@ -41,9 +41,11 @@ mode; the typography and compositing are the real pipeline.*
 
 ---
 
-## Quick start
+## Running the prototype
 
-No Azure subscription needed — `MAI_MOCK` defaults to on.
+Two processes. With no Azure credentials the whole pipeline still
+runs -- brief, typesetting, compositing, export -- against placeholder
+imagery, so nothing here needs a subscription to evaluate.
 
 ```bash
 python -m venv .venv
@@ -51,7 +53,7 @@ python -m venv .venv
 .venv/Scripts/python -m playwright install chromium
 ```
 
-Run the tests (179, ~36s):
+Run the tests (269, ~100s):
 
 ```bash
 cd backend && ../.venv/Scripts/python -m pytest -q
@@ -208,7 +210,7 @@ the spend is intended.
 
 ## Status
 
-**179 tests pass.** Phase 1 is complete and most of Phase 2 with it:
+**269 tests pass.** Phase 1 is complete and most of Phase 2 with it:
 dimensions, safe zones, logo compositing, the Chromium text pipeline in seven
 locales, the campaign pipeline, the job API, bundle export, the spend controls
 above, and the reference-image path in both sub-modes.

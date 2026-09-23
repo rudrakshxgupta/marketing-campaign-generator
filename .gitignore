@@ -9,3 +9,6 @@ node_modules/
 # Skills installed via `npx skills add` — vendored copies, not our source.
 .agents/
 .claude/
+
+# Deliverables: the built video is large and regenerable.
+deliverables/*.mp4
