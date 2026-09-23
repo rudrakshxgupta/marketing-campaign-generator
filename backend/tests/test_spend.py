@@ -387,3 +387,47 @@ async def test_economy_is_a_no_op_for_a_single_format(tmp_path: Path) -> None:
     assert counter.calls == 1
     assert result.master_format is None
     assert "cropped to a shorter shape" not in result.prompt
+
+
+async def test_a_limit_raised_in_the_env_file_is_picked_up_without_a_restart(
+    tmp_path, monkeypatch
+) -> None:
+    """The comment said this happened; the code only re-read the counter.
+
+    Hitting the cap mid-session meant stopping the server to get one more
+    image out, which is the worst possible moment to be restarting things.
+    """
+    from app.foundry.budget import BudgetedImageBackend, BudgetExceeded
+    from app.foundry.mock_client import MockImageClient
+
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    env = tmp_path / ".env"
+    env.write_text("MAI_DAILY_LIMIT=1\nMAI_TOTAL_LIMIT=50\n", encoding="utf-8")
+    monkeypatch.delenv("MAI_DAILY_LIMIT", raising=False)
+
+    budget = BudgetedImageBackend(MockImageClient(), storage_root=storage)
+    await budget.generate(prompt="x", width=1024, height=1024)
+
+    with pytest.raises(BudgetExceeded):
+        await budget.generate(prompt="y", width=1024, height=1024)
+
+    env.write_text("MAI_DAILY_LIMIT=5\nMAI_TOTAL_LIMIT=50\n", encoding="utf-8")
+    await budget.generate(prompt="y", width=1024, height=1024)
+    assert budget.usage.today == 2
+
+
+async def test_an_explicitly_passed_limit_ignores_the_env_file(tmp_path) -> None:
+    # Otherwise a test pinning a cap of 1 silently inherits whatever the
+    # developer happens to have in .env, and stops testing anything.
+    from app.foundry.budget import BudgetedImageBackend, BudgetExceeded
+    from app.foundry.mock_client import MockImageClient
+
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (tmp_path / ".env").write_text("MAI_DAILY_LIMIT=999\n", encoding="utf-8")
+
+    budget = BudgetedImageBackend(MockImageClient(), storage_root=storage, daily_limit=1)
+    await budget.generate(prompt="x", width=1024, height=1024)
+    with pytest.raises(BudgetExceeded):
+        await budget.generate(prompt="y", width=1024, height=1024)

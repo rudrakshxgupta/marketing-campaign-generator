@@ -94,6 +94,9 @@ class BudgetedImageBackend:
             if total_limit is not None
             else int(os.environ.get("MAI_TOTAL_LIMIT", DEFAULT_TOTAL_LIMIT))
         )
+        # Explicit limits win over the file forever: a test that pins a cap
+        # of 1 must not inherit whatever the developer's .env happens to say.
+        self._explicit = daily_limit is not None or total_limit is not None
         self.usage = Usage.load(self._ledger)
 
     @property
@@ -104,9 +107,39 @@ class BudgetedImageBackend:
     def remaining_total(self) -> int:
         return max(0, self.total_limit - self.usage.total)
 
+    def _reload_limits(self) -> None:
+        """Pick up a limit raised in ``.env`` without a restart.
+
+        The comment below used to claim this happened and it did not: the
+        ledger was re-read, the limits were not, so raising the cap meant
+        stopping a server mid-session to get an image out. Read from the file
+        rather than ``os.environ`` because the process environment was
+        populated once at import and a later edit never reaches it.
+
+        Only ever raises what a caller passed explicitly -- a test that pins
+        a limit of 1 keeps it whatever the developer's .env says.
+        """
+        if self._explicit:
+            return
+        path = self._ledger.parent.parent / ".env"
+        if not path.is_file():
+            return
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                name, _, value = line.strip().partition("=")
+                if name == "MAI_DAILY_LIMIT":
+                    self.daily_limit = int(value.strip() or self.daily_limit)
+                elif name == "MAI_TOTAL_LIMIT":
+                    self.total_limit = int(value.strip() or self.total_limit)
+        except (OSError, ValueError):
+            # A malformed .env must not take the spend guard offline; the
+            # limits already loaded stay in force.
+            logger.warning("could not re-read limits from %s", path)
+
     def _check(self) -> None:
         # Re-read so a limit raised in another process is picked up, and so a
         # long-running server rolls over at midnight.
+        self._reload_limits()
         self.usage = Usage.load(self._ledger)
 
         if self.usage.today >= self.daily_limit:
