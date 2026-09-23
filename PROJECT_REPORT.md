@@ -284,7 +284,7 @@ what actually matters: that upscaling stays within a 1.45× budget.
 Stated plainly, because some of it is load-bearing.
 
 **Nothing has run against Azure.** `MaiImageClient` is written and
-unit-tested but has never touched the real endpoint. Every image so far is a
+unit-tested. Since this was written the system has run live many times: FLUX.2-pro for imagery and GPT-5-mini for the brief and copy, with the
 coloured placeholder.
 
 **The copy is canned.** Hindi and Tamil text in the demos is hand-written

@@ -1,7 +1,11 @@
 # Documentation
 
-Instagram campaign creatives from a brief or a reference image, in Indian
-languages, built on Microsoft AI Foundry with **MAI-Image-2.6**.
+Instagram campaign creatives from one line of input, in seven Indian
+languages, on Microsoft AI Foundry.
+
+Running live on **FLUX.2-pro** for imagery and **GPT-5-mini** for the brief and
+copy. The pipeline is model-agnostic; see [decisions.md](decisions.md) for why
+it is not MAI.
 
 ## Start here
 
@@ -17,6 +21,7 @@ languages, built on Microsoft AI Foundry with **MAI-Image-2.6**.
 | [testing.md](testing.md) | How to verify the system, including by eye |
 | [decisions.md](decisions.md) | Decision records — what was chosen, and what it cost |
 | [roadmap.md](roadmap.md) | What is built, what is not, mapped to issues |
+| [setup.md](setup.md) | Connecting a real Foundry resource |
 
 ## The one idea
 

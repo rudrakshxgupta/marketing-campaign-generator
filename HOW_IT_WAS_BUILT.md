@@ -161,7 +161,7 @@ renders one campaign in all seven locales from a single generation and builds a
 contact sheet. A detached matra passes every automated check; it has to be
 looked at.
 
-179 tests, ~36 seconds.
+269 tests, about 100 seconds.
 
 ---
 

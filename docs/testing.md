@@ -132,8 +132,10 @@ checks what actually matters: that upscaling stays within a 1.45× budget.
 
 ## Not yet covered
 
-- **Live MAI.** `MaiImageClient` is unit-tested but has never touched the real
-  endpoint ([#29](https://github.com/rudrakshxgupta/marketing-campaign-generator/issues/29)).
+- **Live MAI.** The FLUX path is exercised live regularly; `MaiImageClient` is
+  unit-tested but has never touched a real MAI endpoint, because MAI image
+  quota on this subscription is zero
+  ([#29](https://github.com/rudrakshxgupta/marketing-campaign-generator/issues/29)).
 - **Golden-image shaping diffs.** The ZWNJ test proves shaping is *active*;
   goldens would catch the subtler case where shaping runs but the font changed
   underneath ([#20](https://github.com/rudrakshxgupta/marketing-campaign-generator/issues/20)).

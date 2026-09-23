@@ -1,12 +1,24 @@
-# Marketing Campaign Generator
+# BrandlyAI — Social Media Content Generation in Multiple Languages
 
-Instagram campaign creatives from a brief or a reference image, in Indian
-languages, built on Microsoft AI Foundry with **MAI-Image-2.6**.
+A marketer types **one line** — what they sell. They get back Instagram-ready
+campaign creatives in **seven Indian languages**, on Microsoft AI Foundry.
 
-📖 **[Full documentation](docs/)** — architecture, constraints, API, typography,
-compliance, decisions, roadmap.
+Everything else — what the photograph shows, the proposition, the occasion, the
+copy in each language — is worked out from that one line.
 
-📋 **[Project report](PROJECT_REPORT.md)** — current status · 🔨 **[How it was built](HOW_IT_WAS_BUILT.md)** — the making of it
+```
+"cold-pressed coconut oil in a 500ml glass bottle"
+        │
+        ├─ 1 image call ──► one text-free photograph
+        └─ 7 languages  ──► typeset and composited on top, at no extra cost
+```
+
+**Measured in the recorded demo: 1 image call → 7 finished deliverables.**
+
+![Seven locales from a single generation](docs/images/language-proof.png)
+
+*All seven locales from one image generation. Each auto-fitted to its own
+script's metrics, all inside the Instagram safe zone.*
 
 ---
 
@@ -17,35 +29,27 @@ deterministically on top.
 
 Three verified facts force this:
 
-1. **MAI-Image-2.6 declares `Languages: en`.** Asking it to draw Devanagari or
-   Tamil is outside its supported envelope, and Indic scripts need complex
-   shaping the model garbles in a uniquely dangerous way — the output looks
-   plausible to an English-speaking operator and illiterate to the audience.
-2. **The model allows 2–12 requests per minute.** Six languages across four
-   formats as separate calls is not physically possible.
-3. **Azure OCR cannot extract 8 of the Indic scripts.** For most of our
-   languages we could not verify model-drawn text even if we wanted it. We do
-   not ship what we cannot check.
+1. **The image models support English only.** Indic scripts need complex
+   shaping — reordering, conjuncts, matras — and diffusion models garble them
+   in a uniquely dangerous way: the output looks plausible to an
+   English-speaking operator and reads as illiterate to the audience.
+2. **Generation is rate-limited and billed per call.** Seven languages across
+   four formats as separate calls is neither affordable nor fast.
+3. **Azure OCR cannot read 8 of the Indic scripts**, Bengali, Tamil and Telugu
+   among them. For most of our languages we could not verify model-drawn text
+   even if we wanted to. We do not ship what we cannot check.
 
 So the seventh language costs **zero** model calls, the logo is byte-exact
-rather than hallucinated, and QA for the text path is arithmetic instead of
-inference.
-
-**Measured: 2 image calls → 14 deliverables.**
-
-![Seven locales from a single generation](docs/images/language-proof.png)
-
-*All seven v1 locales from one image generation. Each auto-fitted to its own
-script's metrics, all inside the Instagram safe zone. The background is mock
-mode; the typography and compositing are the real pipeline.*
+rather than hallucinated, and QA for the text path becomes arithmetic instead
+of inference.
 
 ---
 
 ## Running the prototype
 
-Two processes. With no Azure credentials the whole pipeline still
-runs -- brief, typesetting, compositing, export -- against placeholder
-imagery, so nothing here needs a subscription to evaluate.
+Two processes. **With no Azure credentials the whole pipeline still runs** —
+brief, typesetting, compositing, review, export — against placeholder imagery,
+so this can be evaluated without a subscription.
 
 ```bash
 python -m venv .venv
@@ -53,86 +57,85 @@ python -m venv .venv
 .venv/Scripts/python -m playwright install chromium
 ```
 
-Run the tests (269, ~100s):
+Backend, from `backend/`:
 
 ```bash
-cd backend && ../.venv/Scripts/python -m pytest -q
+../.venv/Scripts/python -m uvicorn app.main:app --port 8000
 ```
 
-Render one campaign in all seven locales and build a contact sheet — the visual
-gate for the riskiest part of the product:
+Frontend, from `frontend/`:
 
 ```bash
-cd backend && ../.venv/Scripts/python scripts/language_proof.py
+npm install && npm run dev
 ```
 
-Run the API:
+Open <http://localhost:5173>.
+
+Run the tests (269, about 100 seconds):
 
 ```bash
-cd backend && ../.venv/Scripts/python -m uvicorn app.main:app --reload
+.venv/Scripts/python -m pytest backend/tests -q
 ```
 
-```bash
-curl -X POST localhost:8000/api/campaigns -H "content-type: application/json" -d "{\"brief\":\"a glass bottle of coconut oil on dark walnut, warm festive bokeh\",\"formats\":[\"portrait\",\"story\"],\"occasion\":\"Diwali\",\"occasion_by_locale\":{\"bn\":\"Durga Puja\"}}"
-```
+### Going live
 
-Then poll `/api/jobs/{id}` and download `/api/jobs/{id}/bundle`. Full reference
-in [docs/api.md](docs/api.md).
+Copy `.env.example` to `.env` and fill in your Foundry endpoint. `MAI_MOCK=0`
+switches to real generation; `IMAGE_BACKEND=flux` selects FLUX.2-pro. See
+[docs/setup.md](docs/setup.md).
 
 ---
 
-## Connecting real Foundry
+## How it works
 
-Three commands. The Azure CLI is **not** installed by default.
+| Stage | What happens | Costs an image? |
+|-------|--------------|-----------------|
+| **Brief compiler** | A structured model call turns one line into a photograph description, a proposition, an occasion, and the region of the frame to keep clear | no |
+| **Prompt renderer** | A *pure function* — not a model — builds the English prompt, so the no-text and reserved-space clauses can never be dropped | no |
+| **Image generation** | One call. FLUX.2-pro, or MAI-Image when quota allows | **yes, once** |
+| **Copy writer** | Every language authored from a shared strategy in one call | no |
+| **Typesetter** | Headless Chromium (HarfBuzz + ICU) renders each language to a transparent PNG | no |
+| **Compositor** | Base + text + logo, with safe zones and contrast enforced | no |
 
-```bash
-winget install --id Microsoft.AzureCLI -e
-```
+The only rate-limited step is one call per format. Everything after it is CPU
+work that scales freely — which is what makes the seventh language free and the
+seventh *format* cost a generation.
 
-Open a **new** terminal so `PATH` refreshes, then sign in and provision. The
-resource name must be globally unique — it becomes your endpoint hostname.
+---
 
-```bash
-az login
-```
+## What makes it more than a wrapper
 
-```powershell
-./scripts/setup_foundry.ps1 -ResourceName <your-unique-name> -WriteEnv
-```
+**Transcreation, not translation.** Copy is authored in each language from a
+language-neutral strategy. So the referent changes and not just the words:
+Diwali for Hindi, **Durga Puja** for Bengali, **Pongal** for Tamil — from one
+campaign. Translating finished English copy gets the words right and the
+campaign wrong.
 
-The script checks prerequisites, creates the resource and project, confirms
-MAI-Image-2.6 is actually offered to your subscription *before* deploying,
-deploys both 2.6 and 2.6-Flash, and writes your `.env`. Add `-WhatIf` to see
-what it would do without creating anything.
+**Subject preservation.** Upload a photo of a real building and it must not be
+reinvented: a building that gains a storey renders beautifully and advertises a
+property that does not exist. "Use this exact image" keeps the subject
+pixel-accurate and restages only the scene around it, then *measures* the
+result against the original — outline overlap and detail density, with
+architecture held to a stricter floor than food. Drift is flagged before
+anyone publishes. See [docs/fidelity.md](docs/fidelity.md).
 
-It deploys to **`southindia`** by default — one of only two regions carrying
-MAI-Image-2.6, and a good fit for an India-focused product.
+**The logo is never drawn.** A generated logo is a *wrong* logo. It is
+composited from the brand's real file, sized to the mark rather than to the
+file's transparent canvas, with the light or dark version chosen by measuring
+the pixels behind it. No logo file? The brand name is typeset as a wordmark.
 
-Then verify, and answer the questions the documentation cannot:
+**Layout follows the picture.** The brief names a region to keep clear, and the
+frame that comes back is then measured — edge energy and tonal spread across
+eight candidate regions — so the copy lands where the image is actually calm,
+and every creative in a batch does not share one layout.
 
-```bash
-cd backend && ../.venv/Scripts/python scripts/probe_foundry.py
-```
+**Spend is visible before it is spent.** The cost of each action is shown on
+the button. A hard ceiling is enforced *before* the call and persists to disk.
+Repeat prompts are served from a cache without touching the budget.
 
-This measures real generation latency, checks whether output carries C2PA
-credentials, confirms the edits endpoint's output geometry, and writes a report
-you can paste into
-[#29](https://github.com/rudrakshxgupta/marketing-campaign-generator/issues/29).
-It costs **3 image calls** by default and tells you exactly how many it used.
-
-Auth uses Entra ID via `DefaultAzureCredential` — your `az login`. No API key
-is needed, and none should be used in production.
-
-> **File the quota-increase request the same day**:
-> [aka.ms/oai/stuquotarequest](https://aka.ms/oai/stuquotarequest). Priority
-> goes to accounts already using their allocation, so the clock starts when you
-> begin generating, not when you ask.
-
-> ⚠️ **MAI image models are public preview**: no SLA, and Microsoft's own docs
-> say not recommended for production workloads. That is a business risk to
-> accept deliberately. Every call is isolated in
-> `backend/app/foundry/image_client.py` so the blast radius of an API change
-> stays small.
+**Review is free.** The base image carries no text, so correcting copy is a
+typesetting pass, not a regeneration — the creative updates as you type. That
+matters most for Bengali, Tamil and Telugu, where OCR cannot verify the
+rendering and a human reading it is the only check that exists.
 
 ---
 
@@ -140,87 +143,58 @@ is needed, and none should be used in production.
 
 ```
 backend/app/
-  config.py                 settings; MAI_MOCK defaults on
-  main.py                   FastAPI; generation is always a job
-  pipeline.py               one generation -> N language variants
-  foundry/                  the only place that calls MAI, + mock + rate limiting
-  imaging/                  dimensions, safe zones, compositing, Chromium overlay
-  copy/                     languages, prompt construction, transcreation
-docs/                       full documentation
-.github/backlog.json        40 issues as data, with an idempotent seeder
+  main.py              FastAPI surface, job state, uploads
+  pipeline.py          brief → image → N languages → export
+  config.py            settings, .env loading, mock mode
+  copy/                strategy, brief compiler, transcreation, blocklist
+  foundry/             MAI + FLUX clients, spend guard, cache, mock
+  imaging/             dimensions, safe zones, compositing, fidelity,
+                       Chromium typesetter, typeface selection
+backend/tests/         269 tests
+frontend/src/          React UI with Instagram phone-frame preview
+docs/                  architecture, constraints, API, typography, decisions
+deliverables/          submission PDF
 ```
 
-See [docs/code-map.md](docs/code-map.md) for the module-by-module reference.
+Full module-by-module map: [docs/code-map.md](docs/code-map.md).
 
 ---
-
-## Things that are easy to get wrong
-
-Each of these is covered properly in [docs/constraints.md](docs/constraints.md).
-
-**Dimensions.** `width ≥ 768`, `height ≥ 768`, `width × height ≤ 1,048,576`.
-Exact 9:16 computes to a 767px side and is **rejected**; 1.91:1 landscape needs
-a 740px side and is **unreachable**. Both are generated at the nearest legal
-aspect and cropped. `width`/`height` are parameters of the **generations**
-endpoint only — the edits endpoint takes no dimensions.
-
-**Text rendering.** `PIL.features.check("raqm")` is `False` here, so Pillow
-cannot shape Indic scripts — `ImageDraw.text` would silently emit unreordered,
-disconnected glyphs. Text goes through Chromium.
-
-**Safe zones.** Meta unified the 9:16 safe zone in March 2026: top 14%, bottom
-35% for Reels, left/right 6% — a usable box of **950×979**. These raise, they
-do not warn.
-
-**The logo is never described to the model.** A diffusion model produces a
-plausible logo, which is a wrong logo — and describing a mark in a prompt asks
-the model to reproduce a trademark. Same for the product, maps of India, and
-the flag.
-
-**A real subject is never redesigned.** Upload a photo of a building and the
-model restages it — it does not add a floor or move the windows. The prompt
-names the specific features per subject kind, and the result is *measured*
-against the original, because a prompt is advisory and an altered building
-renders beautifully. See [docs/fidelity.md](docs/fidelity.md).
-
-**Copy is transcreated, not translated.** Each language is authored from a
-shared strategy, so the cultural referent can change and not just the words — a
-Diwali line becomes a *Pujo* line for Bengali.
-
----
-
-## Spend controls
-
-Image generation is the dominant cost and the quota is small, so this is
-handled before anything touches Azure.
-
-| | |
-|---|---|
-| **Hard ceiling** | 25/day, 200 total. Checked *before* the call, persisted to disk, survives restarts. A retry loop cannot drain anything. |
-| **Failed calls are free** | A 429 or a network error is never charged to the ledger. |
-| **Cache** | Byte-identical repeats come from disk. Re-clicking Generate costs nothing. |
-| **Economy mode** | One tall master cropped down to every format. Measured: 4 formats went from 4 calls to 1. |
-
-`GET /api/usage` reports spend, headroom and calls saved. A refused call gets
-its own job state, `budget_exceeded` — nothing is broken, we deliberately
-stopped short.
-
-Raise the limits with `MAI_DAILY_LIMIT` and `MAI_TOTAL_LIMIT` once you are sure
-the spend is intended.
 
 ## Status
 
-**269 tests pass.** Phase 1 is complete and most of Phase 2 with it:
-dimensions, safe zones, logo compositing, the Chromium text pipeline in seven
-locales, the campaign pipeline, the job API, bundle export, the spend controls
-above, and the reference-image path in both sub-modes.
+**269 tests pass.** Running live on Microsoft AI Foundry: **FLUX.2-pro** for
+imagery, **GPT-5-mini** for the brief and the copy, headless Chromium for
+typesetting.
 
-**Not yet built**: the live Foundry text model (copy comes from a stub),
-bundled fonts, Azure AI Content Safety, C2PA provenance, the OCR zero-text
-gate, category compliance gates, and the React frontend.
+Built: the full text-to-campaign path, both reference-image modes, subject
+fidelity measurement, seven locales with correct Indic shaping, five Instagram
+formats, safe-zone enforcement, logo and wordmark compositing, the spend
+guard and cache, the human review workflow, live re-typesetting, and the React
+frontend.
 
-`MaiImageClient` is written and unit-tested but has **never touched the real
-endpoint** — mock mode is on by default and a test asserts it stays on.
-
-40 issues track everything: **21 built, 19 pending**. See
+Not built, and honest about it: Azure AI Content Safety at the checkpoints,
+C2PA provenance and AI-disclosure labelling, the OCR zero-text gate, category
+compliance gates for Indian advertising, bundled Noto fonts with golden
+shaping tests, and a persistent job store — jobs currently live in memory and
+do not survive a restart. These are tracked as issues and discussed in
 [docs/roadmap.md](docs/roadmap.md).
+
+### A note on the image model
+
+The project was designed for **MAI-Image-2.6**. Azure's own errors established
+that every Microsoft image model has a quota limit of **0** on this Azure for
+Students subscription, in every region tried. FLUX.2-pro was the model with
+quota, so the pipeline runs on it — both clients implement the same interface
+and the rest of the system never learns which one is in use. That indirection
+was in the design before it was needed, and is the reason switching cost one
+configuration line. See [docs/decisions.md](docs/decisions.md).
+
+---
+
+## Documentation
+
+📖 **[docs/](docs/)** — architecture, constraints, API reference, typography,
+compliance, decisions, roadmap
+📋 **[PROJECT_REPORT.md](PROJECT_REPORT.md)** — full status report
+🔨 **[HOW_IT_WAS_BUILT.md](HOW_IT_WAS_BUILT.md)** — the making of it
+🎬 **[docs/video-script.md](docs/video-script.md)** — narration for the demo video

@@ -53,8 +53,11 @@ deployment.
 
 ### Why #29 comes first
 
-`MaiImageClient` is written and unit-tested but has **never touched the real
-endpoint**. Six questions cannot be answered from documentation:
+`FluxImageClient` has been live many times and the system runs on it daily.
+`MaiImageClient` is written and unit-tested but has **never touched a real MAI
+endpoint**, because the quota for every Microsoft image model on this
+subscription is zero -- so these questions remain unanswerable from
+documentation alone:
 
 - Real generation latency for 2.6 vs Flash — the entire interactive UX budget
   depends on it, and the docs give no figures
