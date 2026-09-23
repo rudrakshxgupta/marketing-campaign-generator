@@ -76,11 +76,12 @@ export default function ReviewPanel({ jobId, locale, copy, onReviewed }) {
       <input type="text" lang={copy.bcp47} value={cta}
              onChange={(e) => setCta(e.target.value)} />
 
-      <div className="row" style={{ marginTop: 10 }}>
-        <button onClick={() => submit(true)} disabled={busy}>
-          {busy ? "Re-rendering…" : edited ? "Save & approve" : "Approve"}
-        </button>
-      </div>
+      {/* A single button, so it spans the panel rather than sitting in a
+          two-column grid with an empty cell beside it. */}
+      <button className="go" style={{ marginTop: 12 }}
+              onClick={() => submit(true)} disabled={busy}>
+        {busy ? "Re-rendering…" : edited ? "Save & approve" : "Approve"}
+      </button>
       <div className="hint" style={{ marginTop: 6 }}>
         Re-renders from the image already generated — <b>no image cost</b>.
       </div>

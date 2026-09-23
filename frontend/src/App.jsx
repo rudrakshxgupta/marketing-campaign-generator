@@ -450,7 +450,7 @@ export default function App() {
                       <img src={r.url} alt="" />
                       {/* Order is load-bearing in edit mode: the first is the
                           subject, the rest are context. */}
-                      {referenceMode === "edit" && (
+                      {referenceMode !== "inspiration" && (
                         <span className="rank">{i === 0 ? "subject" : "context"}</span>
                       )}
                       <button type="button" onClick={() => removeReference(r.id)}
@@ -469,37 +469,49 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="modes" role="group" aria-label="How to use the reference photo">
-                  <button type="button" className="mode"
-                          aria-pressed={referenceMode === "edit"}
-                          onClick={() => setReferenceMode("edit")}>
-                    <span className="dot" aria-hidden="true" />
-                    <span>
-                      <strong>
-                        Use this exact image
-                        {subject?.prefer_exact && <span className="rec">RECOMMENDED</span>}
-                      </strong>
-                      <span className="body">
-                        Keeps your subject pixel-accurate and restages what is
-                        around it — sky, background, light, season. A building
-                        keeps its floors, windows and roofline; the result is
-                        measured against your original and flagged if it drifts.
+                <div className="modes" role="group"
+                     aria-label="How to use the reference photo">
+                  {[
+                    {
+                      key: "exact",
+                      title: "Use this exact image",
+                      body:
+                        "Your subject stays pixel-accurate. Only what is " +
+                        "around it is restaged — sky, background, light, " +
+                        "season. A building keeps its floors, windows and " +
+                        "roofline, and the result is measured against your " +
+                        "original.",
+                      rec: subject?.prefer_exact,
+                    },
+                    {
+                      key: "enhance",
+                      title: "Enhance this image",
+                      body:
+                        "Same subject, better photograph. Even light, true " +
+                        "colour, sharp focus, and a clean background with " +
+                        "clutter removed. Nothing is redesigned or reshaped.",
+                    },
+                    {
+                      key: "inspiration",
+                      title: "Use as inspiration only",
+                      body:
+                        "Borrows the palette and lighting, then generates a " +
+                        "new picture. The subject will not be yours.",
+                    },
+                  ].map((m) => (
+                    <button key={m.key} type="button" className="mode"
+                            aria-pressed={referenceMode === m.key}
+                            onClick={() => setReferenceMode(m.key)}>
+                      <span className="dot" aria-hidden="true" />
+                      <span>
+                        <strong>
+                          {m.title}
+                          {m.rec && <span className="rec">RECOMMENDED</span>}
+                        </strong>
+                        <span className="body">{m.body}</span>
                       </span>
-                    </span>
-                  </button>
-
-                  <button type="button" className="mode"
-                          aria-pressed={referenceMode === "inspiration"}
-                          onClick={() => setReferenceMode("inspiration")}>
-                    <span className="dot" aria-hidden="true" />
-                    <span>
-                      <strong>Use as inspiration only</strong>
-                      <span className="body">
-                        Borrows the palette and lighting, then generates a new
-                        picture. The subject will <b>not</b> be yours.
-                      </span>
-                    </span>
-                  </button>
+                    </button>
+                  ))}
                 </div>
 
                 {shouldUseExact && (
@@ -512,7 +524,7 @@ export default function App() {
                   </div>
                 )}
 
-                {referenceMode === "edit" && (
+                {referenceMode !== "inspiration" && (
                   <div className="note bad">
                     <label className="check">
                       <input type="checkbox" checked={rightsConfirmed}
@@ -520,8 +532,8 @@ export default function App() {
                       <span>I have the rights to this image</span>
                     </label>
                     <div style={{ marginTop: 6 }}>
-                      This reproduces your photograph. It is restaged, never
-                      redesigned.
+                      This reproduces your photograph. It is restaged or
+                      improved, never redesigned.
                     </div>
                   </div>
                 )}

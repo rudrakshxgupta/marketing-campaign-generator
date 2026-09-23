@@ -21,13 +21,20 @@ from PIL import Image
 
 from app.copy.languages import DEFAULT_LOCALES, get_locale
 from app.copy.strategy import (
+    FULL,
+    BARE,
+    NO_AUTHORED_CLAUSES,
+    PLAIN,
+    TERSE,
     BrandKit,
     CreativeBrief,
     CreativeStrategy,
+    ENHANCE_FLOOR_RELIEF,
+    ReferenceMode,
     render_edit_prompt,
     render_prompt,
 )
-from app.copy.fidelity import SubjectKind
+from app.copy.fidelity import FIDELITY_FLOOR, SubjectKind
 from app.copy.transcreate import CopyPack, CopyWriter, StubCopyWriter
 from app.foundry.image_client import ImageBackend, PromptBlocked
 from app.imaging.compose import (
@@ -310,6 +317,9 @@ class CampaignPipeline:
         extra_references: tuple[bytes, ...] = (),
         reference_mime: str = "image/png",
         edit_instruction: str = "",
+        #: What to do with the reference: restage around the subject, improve
+        #: the photograph, or (handled upstream) borrow only its look.
+        reference_mode: ReferenceMode = "exact",
         economy: bool = False,
     ) -> CampaignResult:
         out_dir = self._storage / "renders" / campaign_id
@@ -344,6 +354,7 @@ class CampaignPipeline:
             master_png = await self._generate_base(
                 prompt, brief, master_plan, reference, reference_mime,
                 edit_instruction, crop_safe=crop_safe, extras=extra_references,
+                reference_mode=reference_mode,
             )
             result.image_calls += 1
             master = finalize_base(master_png, master_plan)
@@ -367,6 +378,7 @@ class CampaignPipeline:
                 base_png = await self._generate_base(
                     prompt, brief, plan, reference, reference_mime,
                     edit_instruction, crop_safe=crop_safe, extras=extra_references,
+                    reference_mode=reference_mode,
                 )
                 result.image_calls += 1
                 bases[format_key] = finalize_base(base_png, plan)
@@ -456,6 +468,7 @@ class CampaignPipeline:
         *,
         crop_safe: bool = False,
         extras: tuple[bytes, ...] = (),
+        reference_mode: ReferenceMode = "exact",
     ) -> bytes:
         if reference is not None:
             png, report = await self._generate_from_reference(
@@ -466,37 +479,50 @@ class CampaignPipeline:
                 subject_kind=brief.subject_kind,
                 preserve_subject=brief.preserve_subject,
                 extras=extras,
+                mode=reference_mode,
             )
             self._last_fidelity = report
             return png
-        try:
-            generated = await self._images.generate(
-                prompt=prompt, width=plan.gen_w, height=plan.gen_h
+        # A blocklist refusal is not billed, so stepping back down the ladder
+        # is free in quota terms. Each step removes only negative phrasing --
+        # the subject, the scene and the reserved region are never traded away,
+        # because a creative that got past the filter by becoming a different
+        # creative is not a recovery.
+        attempted: set[str] = set()
+        blocked: PromptBlocked | None = None
+
+        for level in (FULL, NO_AUTHORED_CLAUSES, TERSE, BARE, PLAIN):
+            text = (
+                prompt
+                if level == FULL
+                else render_prompt(brief, crop_safe=crop_safe, reduce=level)
             )
-        except PromptBlocked:
-            # A blocklist refusal is not billed, so one retry is free -- and
-            # the clause that most often causes it is the one the brief wrote
-            # to *prevent* a problem. See render_prompt's docstring.
-            if not brief.must_not_depict:
-                raise
-            retry = render_prompt(
-                brief, crop_safe=crop_safe, omit_authored_prohibitions=True
-            )
-            if retry == prompt:
-                raise
-            logger.warning(
-                "prompt refused; retrying without %d authored prohibition(s)",
-                len(brief.must_not_depict),
-            )
-            self.last_prompt = retry
-            self.note(
-                "the service refused the first prompt; retried without the "
-                "brief's own 'do not show' list (no image was billed)"
-            )
-            generated = await self._images.generate(
-                prompt=retry, width=plan.gen_w, height=plan.gen_h
-            )
-        return generated.png
+            if text in attempted:
+                # Nothing left to remove at this level; another identical
+                # request would be refused identically.
+                continue
+            attempted.add(text)
+            self.last_prompt = text
+
+            try:
+                generated = await self._images.generate(
+                    prompt=text, width=plan.gen_w, height=plan.gen_h
+                )
+            except PromptBlocked as exc:
+                blocked = exc
+                logger.warning("prompt refused at reduction level %d", level)
+                continue
+
+            if level != FULL:
+                self.note(
+                    f"the service refused the first prompt; it succeeded with "
+                    f"the brief's negative clauses removed (reduction {level}, "
+                    f"no image was billed for the refusals)"
+                )
+            return generated.png
+
+        assert blocked is not None
+        raise blocked
 
     async def _generate_from_reference(
         self,
@@ -508,6 +534,7 @@ class CampaignPipeline:
         subject_kind: SubjectKind = SubjectKind.GENERIC,
         preserve_subject: bool = True,
         extras: tuple[bytes, ...] = (),
+        mode: ReferenceMode = "exact",
     ) -> tuple[bytes, FidelityReport | None]:
         """Image-to-image path.
 
@@ -523,9 +550,10 @@ class CampaignPipeline:
         prepared = _cover_crop(load_png(reference), plan.gen_w, plan.gen_h)
         edited = await self._images.edit(
             prompt=render_edit_prompt(
-                instruction or "Restage this on a clean studio backdrop",
+                instruction,
                 preserve_subject=preserve_subject,
                 subject_kind=subject_kind,
+                mode=mode,
             ),
             image=to_png(prepared),
             mime="image/png",
@@ -539,7 +567,20 @@ class CampaignPipeline:
         with load_png(edited.png) as returned:
             adjusted = _cover_crop(returned.convert("RGB"), plan.gen_w, plan.gen_h)
 
-        report = compare(prepared, adjusted, subject_kind) if preserve_subject else None
+        # Enhancing legitimately moves pixels on the subject -- that is the
+        # request -- so holding it to the restaging floor would fail every
+        # successful enhance. Outline and detail density are still checked at
+        # full strength, and those are what catch a building gaining a storey.
+        floor = (
+            max(0.5, FIDELITY_FLOOR[subject_kind] - ENHANCE_FLOOR_RELIEF)
+            if mode == "enhance"
+            else None
+        )
+        report = (
+            compare(prepared, adjusted, subject_kind, floor=floor)
+            if preserve_subject
+            else None
+        )
         if report is not None and not report.passed:
             logger.warning("subject fidelity failed -- %s", report.reason)
         return to_png(adjusted), report

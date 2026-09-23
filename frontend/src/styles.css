@@ -529,6 +529,31 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 .review-panel input[type="text"] { padding: 7px 10px; }
 .review-panel .go { padding: 9px var(--s3); }
 
+.approved {
+  display: flex; align-items: center; gap: var(--s2);
+  border-top: 1px solid var(--edge); padding: var(--s3) var(--s4);
+  font-size: var(--t-small); color: var(--green);
+}
+.link {
+  appearance: none; background: none; border: 0; padding: 0;
+  color: var(--sage-dim); font-size: var(--t-small);
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+  margin-left: auto;
+}
+.link:hover { color: var(--bone); }
+
+/* A bare <button> inherits the OS default, which on Windows is a white
+   rectangle -- unmissable on a dark ground and exactly what shipped. This
+   is the floor, so forgetting a class degrades to something wearable
+   rather than to a hole in the layout. */
+button:not([class]) {
+  appearance: none; cursor: pointer;
+  background: var(--raise-2); color: var(--bone);
+  border: 1px solid var(--edge-lit); border-radius: var(--r-sm);
+  padding: 8px var(--s3); font-size: var(--t-small);
+}
+button:not([class]):hover { border-color: var(--sage-dim); }
+
 /* The English gloss is what makes reviewing a script you cannot read
    meaningful, so it sits under the headline rather than in a tooltip. */
 .backtrans {

@@ -95,9 +95,13 @@ async def test_prompt_forbids_text_and_reserves_space(client: AsyncClient) -> No
     # is ever dropped the model will draw its own text into the reserved area.
     assert "no text" in prompt and "no lettering" in prompt
     assert "reserved for later graphic overlay" in prompt
-    # Global prohibitions that exist for legal rather than aesthetic reasons.
-    assert "no any map" in prompt or "no map" in prompt
-    assert "no any national flag" in prompt or "no national flag" in prompt
+    # Maps, flags, public figures and trademarks are still barred -- but by
+    # constraining the frame positively rather than by listing them. Naming
+    # four flagged categories in one sentence is what a term blocklist sees,
+    # and it was getting our prompts refused outright.
+    assert "photograph only the subject and setting" in prompt
+    for named in ("national flag", "public figure", "trademark"):
+        assert named not in prompt, f"prompt still names {named!r} to forbid it"
 
 
 async def test_machine_written_copy_is_flagged_for_review(client: AsyncClient) -> None:

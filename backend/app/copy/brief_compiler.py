@@ -132,6 +132,8 @@ guarantees, certifications or statistics unless they appear in the user's \
 input. Inventing "50% off" writes a false advertisement.
 5. NEVER name a real person, public figure, celebrity, third-party brand, \
 trademark, or copyrighted character -- in ANY field, including must_not_depict. \
+This also covers technical terms derived from brand names, which are easy to \
+write without noticing: say "welted construction", not "goodyear welt". \
 Ruling something out still names it, and the downstream filter matches words \
 rather than meaning: "no Nike swoosh" reads to it as a request for a \
 trademark and gets the entire image refused. Write "no visible third-party \
@@ -221,6 +223,7 @@ def fallback_brief(
     return CompiledBrief(
         brief=CreativeBrief(
             subject=product,
+            source_text=product,
             scene="on a clean surface with a softly blurred background",
             palette_names=palette or ("warm gold", "deep brown", "soft cream"),
             lighting=(style_hint or {}).get("lighting")
@@ -321,6 +324,7 @@ async def compile_brief(
 
     brief = CreativeBrief(
         subject=payload["subject"],
+        source_text=product,
         scene=payload.get("scene", ""),
         framing=payload.get("framing", "rule of thirds"),
         camera=payload.get("camera", "50mm, eye level"),

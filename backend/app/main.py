@@ -150,18 +150,41 @@ class GenerateRequest(BaseModel):
     #:
     #: In edit mode the first is the subject and the rest are context.
     reference_ids: list[str] = Field(default_factory=list)
-    #: "inspiration" matches the look and builds a fresh image around your
-    #: subject. "edit" keeps the actual photo and changes what you describe.
+    #: What to do with the uploaded photograph.
     #:
-    #: Default to inspiration: edit mode derives the output pixel-for-pixel
-    #: from the input, so if the user uploaded someone else's ad it produces a
-    #: derivative work. It also inherits the input's composition, which means
+    #: - "exact": keep the subject pixel-faithful and restage what is around
+    #:   it -- sky, background, setting, light.
+    #: - "enhance": improve the photograph itself (light, clarity, clutter)
+    #:   while keeping the same subject.
+    #: - "inspiration": borrow only the look and generate a fresh image. The
+    #:   subject will NOT be the user's.
+    #:
+    #: "edit" is accepted as the old name for "exact".
+    #:
+    #: Default to inspiration: the other two derive the output from the input,
+    #: so if the user uploaded someone else's photograph they produce a
+    #: derivative work. They also inherit the input's composition, which means
     #: our safe zones are no longer guaranteed.
-    reference_mode: Literal["inspiration", "edit"] = "inspiration"
+    reference_mode: Literal["inspiration", "exact", "enhance", "edit"] = "inspiration"
     #: What to change, for edit mode.
     edit_instruction: str = ""
     #: Required for edit mode. The user asserting they may use this image.
     rights_confirmed: bool = False
+
+    @property
+    def uses_the_actual_photo(self) -> bool:
+        """Whether the output is derived from the upload.
+
+        Both "exact" and "enhance" reproduce the user's photograph, so both
+        need the rights attestation and both get a fidelity check. Only
+        "inspiration" generates something new.
+        """
+        return self.resolved_mode in ("exact", "enhance")
+
+    @property
+    def resolved_mode(self) -> str:
+        """The mode with the legacy name folded in."""
+        return "exact" if self.reference_mode == "edit" else self.reference_mode
 
     @property
     def all_reference_ids(self) -> list[str]:
@@ -369,16 +392,18 @@ async def create_campaign(request: GenerateRequest) -> dict:
     if unknown_locales:
         raise HTTPException(400, f"unknown locales: {sorted(unknown_locales)}")
 
-    if request.reference_mode == "edit":
+    if request.uses_the_actual_photo:
         if not request.all_reference_ids:
-            raise HTTPException(400, "edit mode needs a reference_id")
+            raise HTTPException(
+                400, f"{request.resolved_mode} mode needs a reference_id"
+            )
         # Edit mode reproduces the uploaded image pixel-for-pixel, so the user
         # has to assert they may use it. This is not boilerplate.
         if not request.rights_confirmed:
             raise HTTPException(
                 400,
-                "edit mode requires rights_confirmed: you must have the rights "
-                "to the image you uploaded",
+                f"{request.resolved_mode} mode requires rights_confirmed: you "
+                f"must have the rights to the image you uploaded",
             )
 
     job = Job(id=uuid.uuid4().hex[:12])
@@ -397,7 +422,7 @@ async def create_campaign(request: GenerateRequest) -> dict:
         "deliverables_expected": len(request.formats) * len(request.locales),
         "economy": request.economy,
         "reference_mode": (
-            request.reference_mode if request.all_reference_ids else None
+            request.resolved_mode if request.all_reference_ids else None
         ),
         "references": len(request.all_reference_ids),
         "poll": f"/api/jobs/{job.id}",
@@ -673,7 +698,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
         if ref_paths:
             ref_path = ref_paths[0]
 
-            if request.reference_mode == "inspiration":
+            if request.resolved_mode == "inspiration":
                 profiles = []
                 for path in ref_paths:
                     with Image.open(path) as reference:
@@ -755,7 +780,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
                 else ""
             )
         )
-        if request.all_reference_ids and request.reference_mode == "edit":
+        if request.uses_the_actual_photo:
             job.logs.append(
                 f"preserving the {brief.subject_kind.value} subject"
                 if request.preserve_subject
@@ -800,6 +825,7 @@ async def _run_job(job: Job, request: GenerateRequest) -> None:
             economy=request.economy,
             reference=reference_bytes,
             extra_references=tuple(extra_reference_bytes),
+            reference_mode=request.resolved_mode,
             edit_instruction=request.edit_instruction,
         )
 

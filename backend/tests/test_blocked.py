@@ -18,7 +18,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.copy.brief_compiler import _scrub_prohibitions
-from app.copy.strategy import BrandKit, CreativeBrief, render_prompt
+from app.copy.strategy import (
+    NO_AUTHORED_CLAUSES,
+    TERSE,
+    BrandKit,
+    CreativeBrief,
+    render_prompt,
+)
 from app.foundry.flux_client import _as_block
 from app.foundry.image_client import MaiError, PromptBlocked
 from app.main import RUNNING_STATES, app
@@ -86,21 +92,38 @@ def test_ordinary_prohibitions_survive() -> None:
     assert _scrub_prohibitions(items) == items
 
 
-def test_omitting_authored_prohibitions_keeps_every_clause_we_own() -> None:
+def test_reducing_a_prompt_keeps_what_the_pipeline_depends_on() -> None:
     brief = CreativeBrief(
         subject="a pair of low-top leather sneakers",
+        scene="on a sunlit balcony",
         must_not_depict=("any Nike swoosh",),
     )
-    reduced = render_prompt(brief, omit_authored_prohibitions=True)
+    for level in (NO_AUTHORED_CLAUSES, TERSE):
+        reduced = render_prompt(brief, reduce=level)
+        assert "Nike" not in reduced
+        # Never traded away at any level: text in the base defeats the
+        # overlay, and losing the reserved region puts copy on the subject.
+        assert "no text" in reduced
+        assert "reserved for later graphic overlay" in reduced
+        # And the campaign still has to be the campaign that was briefed.
+        assert "low-top leather sneakers" in reduced
+        assert "sunlit balcony" in reduced
 
-    assert "Nike" not in reduced
-    # The two clauses the rest of the pipeline depends on are not negotiable:
-    # text in the base would defeat the overlay, and losing the reserved
-    # region would put the logo on top of the subject.
-    assert "no text" in reduced
-    assert "reserved for later graphic overlay" in reduced
-    # Our own fixed prohibitions stay -- they are not what tripped the filter.
-    assert "no any map" in reduced
+
+def test_the_prompt_never_names_a_forbidden_category_to_forbid_it() -> None:
+    """The clause that was getting every prompt refused.
+
+    It read "The frame contains no any map, no any national flag, no any
+    recognisable public figure, no any third-party brand or trademark" and
+    went on every request. A blocklist matches terms and cannot read
+    negation, so that sentence is a prompt about flags and trademarks.
+    """
+    prompt = render_prompt(CreativeBrief(subject="a bottle"))
+    for named in ("map", "national flag", "public figure", "trademark"):
+        assert named not in prompt.lower()
+    # The categories are still excluded -- positively, which also prompts
+    # better: naming a thing raises its salience whatever word precedes it.
+    assert "Photograph only the subject and setting" in prompt
 
 
 # --------------------------------------------------------------------------
@@ -175,8 +198,13 @@ async def test_a_refused_prompt_is_retried_without_the_authored_clauses(
     )
 
 
-async def test_a_refusal_with_nothing_to_drop_is_not_retried(tmp_path) -> None:
-    """Retrying an identical prompt is a wasted round trip, not a recovery."""
+async def test_an_identical_prompt_is_never_sent_twice(tmp_path) -> None:
+    """Reductions that remove nothing must not become extra round trips.
+
+    A brief with no authored clauses collapses levels 0 and 1 to the same
+    text, so the ladder sends the full prompt, the terse rewrite and the bare
+    one -- three distinct prompts, never the same text twice.
+    """
     from app.copy.strategy import CreativeStrategy
     from app.pipeline import CampaignPipeline
 
@@ -204,7 +232,10 @@ async def test_a_refusal_with_nothing_to_drop_is_not_retried(tmp_path) -> None:
     finally:
         await pipeline.aclose()
 
-    assert len(calls) == 1
+    assert len(calls) == len(set(calls)), "the same prompt was sent twice"
+    assert len(calls) == 3, "expected full, terse and bare"
+    # The bare rung still has to describe the campaign that was briefed.
+    assert "a bottle" in calls[-1]
 
 
 async def test_a_prompt_refused_twice_reports_a_block_not_a_crash(
