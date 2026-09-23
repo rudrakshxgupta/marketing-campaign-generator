@@ -57,6 +57,9 @@ python -m venv .venv
 .venv/Scripts/python -m playwright install chromium
 ```
 
+On Windows, `start.cmd` launches both servers in their own windows and opens
+the browser. Or by hand:
+
 Backend, from `backend/`:
 
 ```bash
@@ -70,6 +73,10 @@ npm install && npm run dev
 ```
 
 Open <http://localhost:5173>.
+
+> Both are development servers and live only as long as their window. If the
+> interface loads but nothing responds, the API window has been closed: the
+> page is served by Vite and still appears, while every call behind it fails.
 
 Run the tests (269, about 100 seconds):
 
