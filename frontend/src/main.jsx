@@ -14,11 +14,11 @@ import "@fontsource/noto-sans-bengali";
 import "@fontsource/noto-sans-tamil";
 import "@fontsource/noto-sans-telugu";
 
-import App from "./App";
+import Site from "./Site";
 import "./styles.css";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <App />
+    <Site />
   </React.StrictMode>
 );
