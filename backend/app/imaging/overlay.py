@@ -193,6 +193,57 @@ class OverlayRenderer:
             finally:
                 await page.close()
 
+    async def wordmark(self, text: str, *, height_px: int = 120) -> bytes:
+        """Set a brand name as a mark, on transparent ground.
+
+        For the common case where a small seller has a name but no logo file.
+        Leaving the corner empty makes the creative look unfinished, and
+        asking a diffusion model to letter the name produces a *plausible*
+        wordmark, which is to say the wrong one -- so it is typeset here, the
+        same way the copy is, and composited from real glyphs.
+
+        Deliberately not the body face. A wordmark that matches the headline
+        reads as a stray line of copy rather than as a mark, so this is set in
+        a high-contrast serif with tight tracking and small caps -- the
+        conventions that make a name read as an identity.
+
+        The PNG is cropped to the glyphs and returned with alpha, so it drops
+        straight into :func:`composite_logo` and inherits everything that
+        already works there: safe-zone placement, the light/dark knockout
+        chosen from the pixels behind it, and a scrim when the background
+        would swallow it.
+        """
+        browser = await self._ensure_browser()
+        # Generous canvas: the text is measured and cropped afterwards, so
+        # this only has to be big enough not to clip a long name.
+        canvas_w = max(400, len(text) * height_px)
+
+        async with self._lock:
+            page = await browser.new_page(
+                viewport={"width": canvas_w, "height": height_px * 3}
+            )
+            try:
+                await page.set_content(
+                    "<!doctype html><meta charset='utf-8'>"
+                    "<style>html,body{margin:0;background:transparent}"
+                    "#w{display:inline-block;color:#fff;"
+                    "font-family:Georgia,'Iowan Old Style','Times New Roman',serif;"
+                    f"font-size:{height_px}px;font-weight:600;"
+                    "letter-spacing:0.02em;line-height:1.25;white-space:pre;"
+                    "font-variant-caps:all-small-caps;"
+                    # A wordmark is never synthesised bold or italic: faux
+                    # styling smears the very shapes that make it recognisable.
+                    "font-synthesis:none}</style>"
+                    f"<span id='w'>{html.escape(text)}</span>"
+                )
+                await page.evaluate("async () => { await document.fonts.ready; }")
+                element = await page.query_selector("#w")
+                # Screenshot the element rather than the page, so the result
+                # is already tight to the glyphs.
+                return await element.screenshot(omit_background=True, type="png")
+            finally:
+                await page.close()
+
     async def render(
         self,
         *,

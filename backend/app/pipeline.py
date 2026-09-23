@@ -283,6 +283,8 @@ class CampaignPipeline:
         self._writer = writer or StubCopyWriter()
         self._last_fidelity: FidelityReport | None = None
         self._notes: list[str] = []
+        #: Typeset brand marks, keyed by (name, canvas height).
+        self._wordmarks: dict[tuple[str, int], Image.Image] = {}
         #: The prompt most recently built, kept outside the result so a run
         #: that fails still has something to show. A refused prompt is exactly
         #: the one worth reading, and it is the one the old code threw away.
@@ -300,6 +302,31 @@ class CampaignPipeline:
     def note(self, message: str) -> None:
         """Record something the operator should see in the job log."""
         self._notes.append(message)
+
+    async def _wordmark(self, name: str, canvas_h: int) -> Image.Image | None:
+        """Typeset a brand name to stand in for a missing logo file.
+
+        Cached per campaign: a seven-language run composites the same mark
+        seven times, and re-rendering it in Chromium each time would pay the
+        cost seven times for an identical result.
+
+        Rendered at a multiple of the canvas height so the glyphs are
+        resampled down rather than up when placed -- upscaling type is what
+        makes a wordmark look soft next to the copy beside it.
+        """
+        cached = self._wordmarks.get((name, canvas_h))
+        if cached is not None:
+            return cached
+        try:
+            png = await self._renderer.wordmark(
+                name, height_px=max(64, round(canvas_h * 0.09))
+            )
+        except Exception:  # noqa: BLE001 - a missing mark must not fail a run
+            logger.warning("could not typeset a wordmark for %r", name, exc_info=True)
+            return None
+        mark = load_png(png).convert("RGBA")
+        self._wordmarks[(name, canvas_h)] = mark
+        return mark
 
     async def run(
         self,
@@ -617,14 +644,38 @@ class CampaignPipeline:
         )
         composed = composite_overlay(base, overlay_png)
 
+        # No logo file, but a brand name: set the name as a mark. Leaving the
+        # corner empty makes a finished creative look unfinished, and most
+        # small sellers have a name long before they have an asset.
+        #
+        # It goes through composite_logo unchanged, so a typeset wordmark
+        # inherits everything already true of a real mark: safe-zone
+        # placement, the knockout chosen from the pixels behind it, and a
+        # scrim when the background would swallow it.
+        mark, logo_source = logo, "file"
+        if mark is None and brand.name.strip():
+            logo_source = "wordmark"
+            mark = await self._wordmark(brand.name.strip(), base.height)
+
         logo_variant, logo_contrast = "none", 0.0
-        if logo is not None:
+        if (logo := mark) is not None:
             anchor = logo_anchor_for(format_key, box)
             try:
                 composed, placement = composite_logo(
-                    composed.convert("RGB"), logo, format_key=format_key, anchor=anchor
+                    composed.convert("RGB"), logo, format_key=format_key,
+                    anchor=anchor,
+                    # A wordmark is wide and is read, not recognised, so it
+                    # is sized by cap height and allowed a wider footprint;
+                    # an uploaded mark keeps the tuned defaults.
+                    **(
+                        {"width_pct": 0.42, "max_height_pct": 0.038}
+                        if logo_source == "wordmark"
+                        else {}
+                    ),
                 )
                 logo_variant = placement.variant
+                if logo_source == "wordmark":
+                    logo_variant = f"{placement.variant} wordmark"
                 logo_contrast = placement.contrast
             except SafeZoneViolation as exc:
                 # A hard gate, not a warning: a mark under the platform's own

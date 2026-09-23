@@ -197,6 +197,7 @@ def logo_box(
     format_key: str,
     width_pct: float = 0.12,
     padding_pct: float = 0.02,
+    max_height_pct: float = 0.14,
 ) -> tuple[int, int, int, int]:
     """Where the logo goes, in absolute pixels.
 
@@ -208,9 +209,20 @@ def logo_box(
     Size is a fraction of canvas width so the mark reads consistently across
     formats; padding is a fraction of the short edge, applied inward from the
     safe rect.
+
+    Width alone is not enough once a mark can be a *wordmark*. "Kesari Silks"
+    typesets at roughly 5.5:1, so 12% of a 1080px canvas is 130px wide and
+    eleven pixels tall -- present, correctly placed, and completely
+    illegible. Both constraints are computed and the tighter one wins, which
+    leaves square-ish logos exactly where they were (a 1:1 mark at 12% of
+    width is under 10% of height) and lets a long name be sized by its
+    height instead.
     """
-    target_w = max(1, round(canvas_w * width_pct))
-    scale = target_w / logo_w
+    by_width = max(1, round(canvas_w * width_pct)) / logo_w
+    by_height = max(1, round(canvas_h * max_height_pct)) / logo_h
+    scale = min(by_width, by_height)
+
+    target_w = max(1, round(logo_w * scale))
     target_h = max(1, round(logo_h * scale))
 
     safe = safe_rect(canvas_w, canvas_h, format_key)
@@ -298,6 +310,7 @@ def composite_logo(
     anchor: Anchor = "bottom_right",
     width_pct: float = 0.12,
     padding_pct: float = 0.02,
+    max_height_pct: float = 0.14,
     clear_space_ratio: float = 0.25,
     enforce_safe_zone: bool = True,
 ) -> tuple[Image.Image, LogoPlacement]:
@@ -315,6 +328,7 @@ def composite_logo(
         format_key=format_key,
         width_pct=width_pct,
         padding_pct=padding_pct,
+        max_height_pct=max_height_pct,
     )
 
     if enforce_safe_zone:

@@ -434,6 +434,11 @@ export default function App() {
               generated logo is a <b>wrong</b> logo. Placed inside the safe
               zone, sized to the mark itself, with a scrim if the background
               behind it would swallow it.
+              {!logoFile && (brandName.trim()
+                ? <> No file yet, so <b>{brandName.trim()}</b> will be typeset
+                    as a wordmark instead.</>
+                : <> With no file and no brand name, the creative carries no
+                    mark at all.</>)}
             </div>
 
             <div style={{ marginTop: 16 }}>
