@@ -51,6 +51,7 @@ TEMPLATE = """<!doctype html>
   }
   .line {
     font-family: %(font_stack)s;
+    font-weight: %(weight)d;
     color: %(colour)s;
     line-height: %(line_height).3f;
     /* Locked off: positive tracking separates shaped clusters and visibly
@@ -68,7 +69,7 @@ TEMPLATE = """<!doctype html>
     hyphens: none;
     text-shadow: %(shadow)s;
   }
-  #headline { font-weight: 700; }
+  #headline { font-weight: %(weight)d; }
   #subhead  { font-weight: 400; opacity: 0.92; }
   #cta {
     align-self: flex-start;
@@ -77,6 +78,9 @@ TEMPLATE = """<!doctype html>
     border-radius: 999px;
     background: %(cta_bg)s;
     color: %(cta_fg)s;
+    /* Small caps suit a short label and ruin a sentence, so this is only
+       ever applied to the call to action, and only for Latin. */
+    font-variant-caps: %(cta_caps)s;
     text-shadow: none;
   }
 </style></head>
@@ -102,6 +106,16 @@ class TextBox:
 @dataclass(frozen=True)
 class OverlayStyle:
     colour: str = "#FFFFFF"
+    #: Latin display family for this campaign, chosen from what is being
+    #: sold. Empty keeps the locale's own stack.
+    #:
+    #: Applied to Latin scripts ONLY. Substituting a display family for
+    #: Devanagari or Tamil is how shaping breaks: the fallback either lacks
+    #: the conjunct glyphs or has untested metrics, and the result renders
+    #: convincingly while reading as illiterate to the audience.
+    family: tuple[str, ...] = ()
+    weight: int = 700
+    cta_small_caps: bool = False
     cta_background: str = "#D4A03C"
     cta_foreground: str = "#1A0E08"
     #: A soft shadow keeps text legible over photographic mid-tones without
@@ -273,7 +287,18 @@ class OverlayRenderer:
             "box_h": round(height * box.height),
             "justify": box.justify,
             "gap": max(8, round(height * 0.012)),
-            "font_stack": ", ".join(f'"{f}"' for f in metrics.font_stack),
+            # Latin only. Indic locales keep their Noto faces whatever the
+            # campaign's chosen display family is.
+            "font_stack": ", ".join(
+                f'"{f}"'
+                for f in (
+                    style.family
+                    if style.family and metrics.code == "Latn"
+                    else metrics.font_stack
+                )
+            ),
+            "weight": style.weight,
+            "cta_caps": "all-small-caps" if style.cta_small_caps else "normal",
             "colour": style.colour,
             "line_height": metrics.line_height,
             "shadow": style.shadow,

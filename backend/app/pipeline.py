@@ -39,6 +39,7 @@ from app.copy.transcreate import CopyPack, CopyWriter, StubCopyWriter
 from app.foundry.image_client import ImageBackend, PromptBlocked
 from app.imaging.compose import (
     Anchor,
+    best_text_region,
     patch_luminance,
     composite_logo,
     composite_overlay,
@@ -49,6 +50,7 @@ from app.imaging.compose import (
 from app.imaging.dimensions import MAI, Capabilities, plan_for
 from app.imaging.fidelity import FidelityReport, compare
 from app.imaging.overlay import FitReport, OverlayRenderer, OverlayStyle, TextBox
+from app.imaging.typeface import NEUTRAL, Typeface, face_by_name, typeface_for
 from app.imaging.safezones import FEED_INSETS, INSETS_BY_FORMAT, SafeZoneViolation
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,10 @@ class CampaignResult:
     #: re-render has no brief: without it, approving a correction would move
     #: the text to a different corner than the creative it was approving.
     text_region: str = "bottom_left"
+    #: The display face this campaign was set in. Stored for the same reason
+    #: the region is: a review re-render has no brief, and resetting the
+    #: typeface would change the creative someone was approving.
+    typeface: str = "neutral"
     #: Things the run did that the operator should know about but that are not
     #: failures -- a prompt retried in a reduced form, most of all. Silently
     #: recovering is worse than not recovering: the creative that comes back is
@@ -220,7 +226,12 @@ _LIGHT_BACKDROP = 0.45
 _DARK_BACKDROP = 0.18
 
 
-def style_for(base: Image.Image, box: TextBox, brand: BrandKit) -> OverlayStyle:
+def style_for(
+    base: Image.Image,
+    box: TextBox,
+    brand: BrandKit,
+    face: Typeface = NEUTRAL,
+) -> OverlayStyle:
     """Choose copy colour by measuring what the copy will sit on.
 
     The logo has always picked its knockout from the background; the *text* did
@@ -231,6 +242,9 @@ def style_for(base: Image.Image, box: TextBox, brand: BrandKit) -> OverlayStyle:
 
     So the text box is sampled first and the palette chosen from it, with a
     scrim in the mid-tones where neither pure choice is safe.
+
+    ``face`` is the campaign's display family, chosen from what is being sold
+    -- see :mod:`app.imaging.typeface`. It applies to Latin only.
     """
     region = (
         round(base.width * box.left),
@@ -244,6 +258,9 @@ def style_for(base: Image.Image, box: TextBox, brand: BrandKit) -> OverlayStyle:
         # Dark ink on a light backdrop. The shadow has to become a soft light
         # halo instead, or it reads as grime around the letters.
         return OverlayStyle(
+        family=face.stack,
+        weight=face.weight,
+        cta_small_caps=face.cta_small_caps,
             colour="#17130A",
             cta_background=brand.primary_hex,
             cta_foreground="#17130A",
@@ -252,6 +269,9 @@ def style_for(base: Image.Image, box: TextBox, brand: BrandKit) -> OverlayStyle:
 
     if luminance < _DARK_BACKDROP:
         return OverlayStyle(
+        family=face.stack,
+        weight=face.weight,
+        cta_small_caps=face.cta_small_caps,
             colour="#FFFFFF",
             cta_background=brand.primary_hex,
             cta_foreground="#17130A",
@@ -261,6 +281,9 @@ def style_for(base: Image.Image, box: TextBox, brand: BrandKit) -> OverlayStyle:
     # Mid-tone: neither pure white nor near-black is reliably legible, so keep
     # white and lean on a heavier shadow to carve it out of the background.
     return OverlayStyle(
+        family=face.stack,
+        weight=face.weight,
+        cta_small_caps=face.cta_small_caps,
         colour="#FFFFFF",
         cta_background=brand.primary_hex,
         cta_foreground="#17130A",
@@ -362,6 +385,7 @@ class CampaignPipeline:
         result = CampaignResult(
             campaign_id=campaign_id, prompt=prompt, economy=economy,
             text_region=brief.negative_space.region,
+            typeface=typeface_for(brief.subject_kind, brief.mood).name,
         )
 
         # 1. Copy first. It costs no image quota, so a failure here should not
@@ -427,6 +451,7 @@ class CampaignPipeline:
                     out_dir=out_dir,
                     brand=brand,
                     region=brief.negative_space.region,
+                    face=typeface_for(brief.subject_kind, brief.mood),
                 )
                 result.variants.append(variant)
 
@@ -471,6 +496,7 @@ class CampaignPipeline:
                 out_dir=out_dir,
                 brand=brand,
                 region=result.text_region,
+                face=face_by_name(result.typeface),
             )
             replaced.append(variant)
 
@@ -623,12 +649,22 @@ class CampaignPipeline:
         out_dir: Path,
         brand: BrandKit,
         region: str = "bottom_left",
+        face: Typeface = NEUTRAL,
     ) -> Variant:
         copy = copy_pack[locale_key]
         locale = get_locale(locale_key)
         reasons: list[str] = []
 
-        box = text_box_for(format_key, region)
+        # The brief asked for a region and the model may or may not have
+        # honoured it, so the frame that actually came back decides. This is
+        # also what stops every creative in a batch sharing one layout.
+        placed, busyness = best_text_region(base, prefer=region)
+        if placed != region:
+            logger.info(
+                "copy moved from the briefed %s to %s (calmer: %.2f)",
+                region, placed, busyness,
+            )
+        box = text_box_for(format_key, placed)
         overlay_png, fit = await self._renderer.render(
             width=base.width,
             height=base.height,
@@ -640,7 +676,7 @@ class CampaignPipeline:
             box=box,
             # Measured against this image, not assumed. White-on-white renders
             # perfectly and reads as nothing at all.
-            style=style_for(base, box, brand),
+            style=style_for(base, box, brand, face),
         )
         composed = composite_overlay(base, overlay_png)
 

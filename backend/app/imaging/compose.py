@@ -397,3 +397,79 @@ def composite_overlay(base: Image.Image, overlay_png: bytes) -> Image.Image:
             "the overlay must be rendered at the delivery canvas size"
         )
     return Image.alpha_composite(base.convert("RGBA"), overlay)
+
+
+# --------------------------------------------------------------------------
+# Where the copy can actually go
+# --------------------------------------------------------------------------
+
+#: The eight regions a brief may reserve, and that the typesetter can use.
+TEXT_REGIONS: tuple[str, ...] = (
+    "top_left", "top", "top_right",
+    "left", "right",
+    "bottom_left", "bottom", "bottom_right",
+)
+
+
+def region_busyness(image: Image.Image, region: str) -> float:
+    """How much detail sits in one region, 0 (flat) to 1 (busy).
+
+    Edge energy and tonal spread, combined. Either alone is misleading: a
+    smooth steep gradient has almost no edges and still swallows text, and a
+    finely textured wall has plenty of edges while staying tonally flat
+    enough to read against.
+    """
+    from PIL import ImageFilter
+
+    thirds = {
+        "top": (0.0, 0.0, 1.0, 0.42),
+        "bottom": (0.0, 0.58, 1.0, 1.0),
+        "left": (0.0, 0.0, 0.45, 1.0),
+        "right": (0.55, 0.0, 1.0, 1.0),
+        "top_left": (0.0, 0.0, 0.55, 0.45),
+        "top_right": (0.45, 0.0, 1.0, 0.45),
+        "bottom_left": (0.0, 0.55, 0.55, 1.0),
+        "bottom_right": (0.45, 0.55, 1.0, 1.0),
+    }
+    left, top, right, bottom = thirds.get(region, thirds["bottom_left"])
+    box = (
+        round(left * image.width), round(top * image.height),
+        round(right * image.width), round(bottom * image.height),
+    )
+
+    # Downsampled first: we want the tone of the area as a reader perceives
+    # it, not per-pixel sensor noise, which would score every photograph as
+    # uniformly busy.
+    patch = image.crop(box).convert("L").resize((48, 48), Image.LANCZOS)
+    edges = patch.filter(ImageFilter.FIND_EDGES).tobytes()
+    edge_energy = sum(edges) / (len(edges) * 255)
+
+    values = patch.tobytes()
+    mean = sum(values) / len(values)
+    spread = (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5 / 128
+
+    return min(1.0, edge_energy * 2.2 + spread * 0.8)
+
+
+def best_text_region(
+    image: Image.Image, *, prefer: str = "bottom_left", loyalty: float = 0.12
+) -> tuple[str, float]:
+    """Choose the calmest region of this particular image for the copy.
+
+    The brief already names a region and asks the model to keep it clean, but
+    asking is not the same as getting: diffusion models put the subject where
+    they like, and a headline typeset into whatever the brief *hoped* would be
+    empty lands on the product about as often as not.
+
+    Measuring the frame that came back settles it per image, which is also
+    what stops every creative in a batch sharing one layout.
+
+    ``loyalty`` is a handicap in the brief's favour. The reserved region was
+    briefed, prompted for and usually delivered, so it should not lose to a
+    marginally calmer corner -- only to a clearly calmer one.
+    """
+    scored = {region: region_busyness(image, region) for region in TEXT_REGIONS}
+    if prefer in scored:
+        scored[prefer] = max(0.0, scored[prefer] - loyalty)
+    best = min(scored, key=scored.__getitem__)
+    return best, scored[best]

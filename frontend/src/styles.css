@@ -523,7 +523,17 @@ textarea { resize: vertical; min-height: 68px; line-height: 1.5; }
 /* ---------------------------------------------------------- review panel */
 
 .review-panel { border-top: 1px solid var(--edge); padding: var(--s4); background: var(--raise-2); }
-.review-head { font-size: var(--t-small); color: var(--gold); font-weight: 600; margin-bottom: var(--s3); }
+.review-head {
+  display: flex; align-items: baseline; gap: var(--s2);
+  font-size: var(--t-small); color: var(--gold); font-weight: 600;
+  margin-bottom: var(--s3);
+}
+/* Says the picture is catching up, without moving anything: a spinner here
+   would draw the eye away from the creative, which is the thing to watch. */
+.review-head .live {
+  margin-left: auto; font-weight: 400; color: var(--sage-dim);
+  font-size: var(--t-micro);
+}
 .review-panel label { margin: var(--s3) 0 var(--s1); }
 .review-panel label:first-of-type { margin-top: 0; }
 .review-panel input[type="text"] { padding: 7px 10px; }
