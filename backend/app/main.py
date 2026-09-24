@@ -294,6 +294,13 @@ async def usage() -> dict:
             "detail": "mock mode - no calls are billed and nothing is counted",
         }
 
+    # Re-read the ledger and the configured ceilings before reporting. The
+    # spend guard refreshes both on its own, but only when a call is actually
+    # made -- so a limit raised in .env showed the old number here until the
+    # next generation, and this is the figure the interface puts on screen.
+    budget._reload_limits()
+    budget.usage = type(budget.usage).load(budget._ledger)
+
     return {
         "mock": False,
         "today": {
